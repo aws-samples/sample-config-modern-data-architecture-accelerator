@@ -24,9 +24,10 @@ Then navigate to one of the sample folders above. Detailed instructions are prov
 
 ### Basic Deployment
 
+Here's an example to deploy lakeformation_datalake
 ```bash
 # Navigate to a sample configuration directory
-cd sample_configs/basic_datalake
+cd lakeformation_datalake
 
 # Edit the configuration with your organization name
 vi mdaa.yaml
@@ -45,6 +46,10 @@ npm install -g @aws-mdaa/cli
 mdaa ls
 mdaa deploy
 ```
+
+## Cost Considerations
+
+**Important:** Deploying these sample configurations will incur AWS costs. Some architectures, particularly those that include Redshift data warehouses (basic_datawarehouse, lakehouse, governed_lakehouse), can result in significant charges. Please review the [MDAA Cost Documentation](https://docs.aws.amazon.com/solutions/latest/modern-data-architecture-accelerator/cost.html) carefully before deployment.
 
 ## Enable AWS IAM Permissions
 

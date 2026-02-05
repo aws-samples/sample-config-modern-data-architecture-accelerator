@@ -20,40 +20,23 @@ This configuration deploys a complete agentic application with:
 
 ## Deployment Instructions
 
-### Prerequisites
-- CDK bootstrapped in target account ([Bootstrap Guide](../../PREDEPLOYMENT.md))
-- MDAA source repo cloned locally
-- AWS CLI configured with appropriate permissions
-- Amazon Cognito User Pool and App Client configured
-- VPC with private subnets and security groups configured
-
 ### Step-by-Step Deployment
 
-1. **Setup Configuration**
-   ```bash
-   # Copy sample config to your working directory
-   cp -r sample_configs/agentic_app ./my-agentic-app
-   cd my-agentic-app
-   ```
+1. Edit the `mdaa.yaml` to specify an organization name. This must be a globally unique name, as it is used in the naming of all deployed resources.
 
-2. Edit the `mdaa.yaml` to specify an organization name. This must be a globally unique name, as it is used in the naming of all deployed resources.
-
-3. **Configure Context Values**
-
-   Update the `mdaa.yaml` file under the `context:` section with your environment-specific values:
+2. Configure Context Values - Update the `mdaa.yaml` file under the `context:` section with your environment-specific values:
    - `cognito_user_pool_id`: Your Cognito User Pool ID (e.g., `us-east-1_ABC123`)
    - `cognito_client_id`: Your Cognito App Client ID
    - `security_group_id`: Security group ID for the runtime (must allow outbound traffic)
    - `subnet_id_1`: First private subnet ID
    - `subnet_id_2`: Second private subnet ID (for high availability)
 
-4. **Deploy Application**
-   ```bash
-   # Deploy agentic application
-   <path_to_mdaa_repo>/bin/mdaa <path_to_mdaa_repo>/sample_configs/agentic_app/mdaa.yaml deploy
-   ```
+3. Ensure you are authenticated to your target AWS account and have CDK bootstrapped in your target region.
 
-For detailed deployment procedures, see [DEPLOYMENT](../../DEPLOYMENT.md).
+4. Deploy the architecture:
+   ```bash
+   npx @aws-mdaa/cli deploy
+   ```
 
 ***
 
@@ -258,7 +241,7 @@ uv lock
 After code changes, redeploy to rebuild and push the container:
 
 ```bash
-<path_to_mdaa_repo>/bin/mdaa <path_to_mdaa_repo>/sample_configs/agentic_app/mdaa.yaml deploy
+npx @aws-mdaa/cli deploy
 ```
 
 ***

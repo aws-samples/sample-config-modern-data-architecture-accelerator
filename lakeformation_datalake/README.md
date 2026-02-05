@@ -16,30 +16,22 @@ Note that this architecture does not preclude direct S3 access to the data lake 
 
 ## Deployment Instructions
 
-The following instructions assume you have CDK bootstrapped your target account, and that the MDAA source repo is cloned locally.
-More predeployment info and procedures are available in [PREDEPLOYMENT](../../PREDEPLOYMENT.md).
+1. Edit the `mdaa.yaml` to specify an organization name. This must be a globally unique name, as it is used in the naming of all deployed resources, some of which are globally named (such as S3 buckets).
 
-1. Deploy sample configurations into the specified directory structure (or obtain from the MDAA repo under `sample_configs/basic_datalake`).
+2. If required, edit the `mdaa.yaml` to specify `context:` values specific to your environment.
 
-2. Edit the `mdaa.yaml` to specify an organization name. This must be a globally unique name, as it is used in the naming of all deployed resources, some of which are globally named (such as S3 buckets).
+3. Ensure you are authenticated to your target AWS account and have CDK bootstrapped in your target region.
 
-3. If required, edit the `mdaa.yaml` to specify `context:` values specific to your environment.
-
-4. Ensure you are authenticated to your target AWS account.
-
-5. Optionally, run `<path_to_mdaa_repo>/bin/mdaa ls` from the directory containing `mdaa.yaml` to understand what stacks will be deployed.
-
-6. Optionally, run `<path_to_mdaa_repo>/bin/mdaa synth` from the directory containing `mdaa.yaml` and review the produced templates.
-
-7. Run `<path_to_mdaa_repo>/bin/mdaa deploy` from the directory containing `mdaa.yaml` to deploy all modules.
-
-Additional MDAA deployment commands/procedures can be reviewed in [DEPLOYMENT](../../DEPLOYMENT.md).
+4. Deploy the architecture:
+   ```bash
+   npx @aws-mdaa/cli deploy
+   ```
 
 ***
 
 ## Configurations
 
-The sample configurations for this architecture are provided below. They are also available under sample_configs/lakeformation_datalake whithin the MDAA repo.
+The sample configurations for this architecture are provided below.
 
 ### Config Directory Structure
 
@@ -58,7 +50,8 @@ lakeformation_datalake
 │    └───project.yaml
 │    └───crawler.yaml
 │
-└──-sample_data  
+└───datascience
+     └───datascience-team.yaml  
 ```
 
 ***
@@ -67,89 +60,56 @@ lakeformation_datalake
 
 This configuration specifies the global, domain, env, and module configurations required to configure and deploy this sample architecture.
 
-*Note* - Before deployment, populate the mdaa.yaml with appropriate organization and context values for your environment
+*Note* - Before deployment, populate the [mdaa.yaml](mdaa.yaml) with appropriate organization and context values for your environment
 
-```yaml
-# Contents available in mdaa.yaml
---8<-- "target/docs/sample_configs/lakeformation_datalake/mdaa.yaml"
-```
 
 ***
 
 ### tags.yaml
 
-This configuration specifies the tags to be applied to all deployed resources.
-
-```yaml
-# Contents available in tags.yaml
---8<-- "target/docs/sample_configs/lakeformation_datalake/tags.yaml"
-```
+This [configuration](tags.yaml) specifies the tags to be applied to all deployed resources.
 
 ***
 
 ### roles.yaml
 
-This configuration will be used by the MDAA Roles module to deploy IAM roles and Managed Policies required for this sample architecture.
-
-```yaml
-# Contents available in roles.yaml
---8<-- "target/docs/sample_configs/lakeformation_datalake/roles.yaml"
-```
+This [configuration](roles.yaml) will be used by the MDAA Roles module to deploy IAM roles and Managed Policies required for this sample architecture.
 
 ***
 
 ### datalake/datalake.yaml
 
-This configuration will be used by the MDAA S3 Data Lake module to deploy KMS Keys, S3 Buckets, and S3 Bucket Policies required for the lakeformation Data Lake.
-
-```yaml
-# Contents available in datalake/datalake.yaml
---8<-- "target/docs/sample_configs/lakeformation_datalake/datalake/datalake.yaml"
-```
+This [configuration](datalake/datalake.yaml) will be used by the MDAA S3 Data Lake module to deploy KMS Keys, S3 Buckets, and S3 Bucket Policies required for the lakeformation Data Lake.
 
 ***
 
 ### datalake/lakeformation-settings.yaml
 
-This configuration will be used by the MDAA LakeFormation Settings module to ensure LakeFormation is configured to not automatically create IAMAllowPrincipals grants on new Glue databases and tables, as well as to grant LakeFormation administrative access to specified principals.
-
-```yaml
-# Contents available in datalake/lakeformation-settings.yaml
---8<-- "target/docs/sample_configs/lakeformation_datalake/datalake/lakeformation-settings.yaml"
-```
+This [configuration](datalake/lakeformation-settings.yaml) will be used by the MDAA LakeFormation Settings module to ensure LakeFormation is configured to not automatically create IAMAllowPrincipals grants on new Glue databases and tables, as well as to grant LakeFormation administrative access to specified principals.
 
 ***
 
 ### datalake/athena.yaml
 
-This configuration will create a standalone Athena Workgroup which can be used to securely query the data lake via Glue resources. These Glue resources can be either manually created, created via MDAA DataOps Project module (Glue databases), or MDAA Crawler module (Glue tables).
-
-```yaml
-# Contents available in datalake/athena.yaml
---8<-- "target/docs/sample_configs/lakeformation_datalake/datalake/athena.yaml"
-```
+This [configuration](datalake/athena.yaml) will create a standalone Athena Workgroup which can be used to securely query the data lake via Glue resources. These Glue resources can be either manually created, created via MDAA DataOps Project module (Glue databases), or MDAA Crawler module (Glue tables).
 
 ***
 
 ### dataops/project.yaml
 
-This configuration will create a DataOps Project which can be used to support a wide variety of data ops activities. Specifically, this configuration will create a number of Glue Catalog databases and apply fine-grained access control to these using LakeFormation.
-
-```yaml
-# Contents available in dataops/project.yaml
---8<-- "target/docs/sample_configs/lakeformation_datalake/dataops/project.yaml"
-```
+This [configuration](dataops/project.yaml) will create a DataOps Project which can be used to support a wide variety of data ops activities. Specifically, this configuration will create a number of Glue Catalog databases and apply fine-grained access control to these using LakeFormation.
 
 ***
 
 ### dataops/crawler.yaml
 
-This configuration will create Glue crawlers using the DataOps Crawler module.
+This [configuration](dataops/crawler.yaml) will create Glue crawlers using the DataOps Crawler module.
 
-```yaml
-# Contents available in dataops/crawler.yaml
---8<-- "target/docs/sample_configs/lakeformation_datalake/dataops/crawler.yaml"
-```
+***
+
+### datascience/datascience-team.yaml
+
+This [configuration](datascience/datascience-team.yaml) will create a data science team environment with SageMaker resources.
 
 ## Usage Instructions
 
