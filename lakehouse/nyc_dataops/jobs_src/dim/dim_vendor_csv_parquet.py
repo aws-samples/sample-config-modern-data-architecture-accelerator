@@ -21,7 +21,7 @@ job.init(args["JOB_NAME"], args)
 standardized_bucket = args['standardized_bucket']
 standardized_folder = args['standardized_folder']
 s3Destination = "s3://" + standardized_bucket + "/" + standardized_folder + "/"
-#  Add Comments
+# Read data from Glue catalog
 S3bucket_node1 = glueContext.create_dynamic_frame.from_catalog(
     database=args['raw_dbname'],
     table_name=args['raw_tablename'],

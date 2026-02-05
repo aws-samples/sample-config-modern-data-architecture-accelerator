@@ -10,8 +10,6 @@ from awsglue.job import Job
 from awsglue.dynamicframe import DynamicFrame
 from pyspark.sql.functions import year, month, dayofmonth, date_format
 
-# test script update
-
 
 args = getResolvedOptions(sys.argv, ["JOB_NAME", "standardized_bucket", "standardized_folder", "raw_dbname",
                                      "raw_tablename", "standardized_tablename",  "standardized_dbname", "partition_column"])
@@ -25,8 +23,7 @@ partition_column = args['partition_column']
 standardized_bucket = args['standardized_bucket']
 standardized_folder = args['standardized_folder']
 s3Destination = "s3://" + standardized_bucket + "/" + standardized_folder + "/"
-
-#  Add Comments
+# Read data from Glue catalog
 S3bucket_node1 = glueContext.create_dynamic_frame.from_catalog(
     database=args['raw_dbname'],
     table_name=args['raw_tablename'],

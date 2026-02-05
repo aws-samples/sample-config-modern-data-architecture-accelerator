@@ -1,5 +1,5 @@
 from strands import Agent, tool
-from strands_tools import calculator # Import the calculator tool
+from strands_tools import calculator  # Import the calculator tool
 import argparse
 import json
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
@@ -10,7 +10,7 @@ app = BedrockAgentCoreApp()
 # Create a custom tool 
 @tool
 def weather():
-    """ Get weather """ # Dummy implementation
+    """Get weather"""  # Dummy implementation
     return "sunny"
 
 
@@ -27,7 +27,7 @@ agent = Agent(
 @app.entrypoint
 def strands_agent_bedrock(payload):
     """
-    Invoke the agent with a payload
+    Invoke the agent with a payload.
     """
     user_input = payload.get("prompt")
     print("User input:", user_input)

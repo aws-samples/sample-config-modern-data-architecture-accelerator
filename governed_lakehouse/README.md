@@ -29,31 +29,18 @@ Note that this architecture does not preclude direct S3 access to the data lake 
 
 ## Deployment Instructions
 
-### Prerequisites
-- CDK bootstrapped in target account ([Bootstrap Guide](../../PREDEPLOYMENT.md))
-- MDAA source repo cloned locally
-- AWS CLI configured with appropriate permissions
-
 ### Step-by-Step Deployment
 
-1. **Setup Configuration**
+1. Edit the `mdaa.yaml` to specify an organization name. This must be a globally unique name, as it is used in the naming of all deployed resources, some of which are globally named (such as S3 buckets).
+
+2. Make sure you deploy the config in regions that are supported by DataZone. Check [Supported Regions for DataZone](https://docs.aws.amazon.com/datazone/latest/userguide/datazone-supported-regions.html)
+
+3. Ensure you are authenticated to your target AWS account and have CDK bootstrapped in your target region.
+
+4. Deploy the architecture:
    ```bash
-   # Copy sample config to your working directory
-   cp -r sample_configs/governed_lakehouse ./my-governed-lakehouse
-   cd my-governed-lakehouse
+   npx @aws-mdaa/cli deploy
    ```
-
-2. Edit the `mdaa.yaml` to specify an organization name. This must be a globally unique name, as it is used in the naming of all deployed resources, some of which are globally named (such as S3 buckets).
-
-3. Make sure you deploy the config in regions which are supported by Datazone. Check [Supported Regions for Datazone](https://docs.aws.amazon.com/datazone/latest/userguide/datazone-supported-regions.html)
-
-4. **Deploy Application**
-   ```bash
-   # Deploy governed lakehouse
-   <path_to_mdaa_repo>/bin/mdaa <path_to_mdaa_repo>/sample_configs/governed_lakehouse/mdaa.yaml deploy
-   ```
-
-For detailed deployment procedures, see [DEPLOYMENT](../../DEPLOYMENT.md).
 
 ***
 
@@ -82,13 +69,8 @@ governed_lakehouse/
 ### Key Configuration Files
 
 #### mdaa.yaml - Main Configuration
-**⚠️ Required Changes Before Deployment:**
+**⚠️ This [file](mdaa.yaml) Requires Changes Before Deployment:**
 - `organization`: Must be globally unique (used in S3 bucket names)
-
-```yaml
-# Contents available in mdaa.yaml
---8<-- "target/docs/sample_configs/governed_lakehouse/mdaa.yaml"
-```
 
 #### Key Module Configurations
 
@@ -147,9 +129,7 @@ Once the MDAA deployment is complete, follow the following steps to interact wit
 
 1. **Assume the data-admin role** created by the MDAA deployment. This role is configured with AssumeRole trust to the local account by default. Note that this role is the only role configured with write access to the data lake. All other roles (including existing administrator roles in the account) will be denied write access.
 
-2. **Prepare sample data**:
-   - Check the `DATASETS.md` file in the same directory to create a sample_data folder
-   - Follow the instructions to download or create sample CSV files for testing
+2. **Prepare sample data**: Create a sample_data folder with CSV files for testing.
 
 3. **Upload test data** to the data lake buckets:
    ```bash
