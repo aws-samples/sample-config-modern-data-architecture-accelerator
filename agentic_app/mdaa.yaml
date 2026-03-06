@@ -6,15 +6,19 @@ region: default
 tag_configs:
   - ./tags.yaml
 
-organization: <org>
+# TODO: Set an appropriate, unique organization name
+# Failure to do so may result in global naming conflicts.
+organization: test-agentic-org
 
+# TODO: Set appropriate context values for your environment.
+# All values below are placeholders and must be replaced.
 context:
   # remove these two cognito entries if not using cognito for runtime auth
-  cognito_user_pool_id: <>
-  cognito_client_id: <>
-  security_group_id: <>
-  subnet_id_1: <>
-  subnet_id_2: <>
+  cognito_user_pool_id: us-east-1_000000001 # TODO: Replace with your Cognito User Pool ID
+  cognito_client_id: example_ClientId_000 # TODO: Replace with your Cognito Client ID
+  security_group_id: sg-00000000000000001 # TODO: Replace with your Security Group ID
+  subnet_id_1: subnet-00000000000000001 # TODO: Replace with your first Subnet ID
+  subnet_id_2: subnet-00000000000000002 # TODO: Replace with your second Subnet ID
 
 # One or more domains may be specified. Domain name will be incorporated by default naming implementation
 # to prefix all resource names.
