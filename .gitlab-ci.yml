@@ -1,0 +1,15 @@
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+smoke-test:
+  variables:
+    # These are just dummy values to prevent certain CDK NAG false positives
+    CDK_DEFAULT_ACCOUNT: "111111111111"
+    CDK_DEFAULT_REGION: "us-east-1"
+  before_script:
+    - apk add --no-cache git nodejs npm bash python3 py3-pip
+    - npm install -g @aws-mdaa/cli
+  script:
+    - bash -c 'set -o pipefail; scripts/detect-changes.sh | scripts/smoke-test.sh'

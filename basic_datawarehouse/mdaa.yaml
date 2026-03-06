@@ -12,12 +12,12 @@ tag_configs:
 
 # TODO: Set an appropriate, unique organization name
 # Failure to do so may resulting in global naming conflicts.
-organization: <unique org name>
+organization: test-warehouse-org
 
 # TODO: Set appropriate context values for your environment.
 context:
-  vpc_id: <vpc id>
-  subnet_id: <subnet id 1>
+  vpc_id: vpc-00000000000000001
+  subnet_id: subnet-00000000000000001
   redshift_client_cidr_range: 10.0.0.0/24
 
 # One or more domains may be specified. Domain name will be incorporated by default naming implementation
