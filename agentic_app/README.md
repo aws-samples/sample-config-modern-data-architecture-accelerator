@@ -151,59 +151,90 @@ Once the MDAA deployment is complete, follow these steps to test and interact wi
 The deployment stores runtime details in SSM Parameter Store:
 
 ```bash
-# Set your organization and environment names
-ORG="your-org-name"
-ENV="dev"
-REGION="us-east-1"
+# You need to update these variables based on your mdaa.yaml
+ORG=<your-org>                 # change this!
+REGION=<your-region>           # change this! 
+MODULE_NAME="agent-core-app"   # default value from the sample config
+DOMAIN="ai"                    # default value from the sample config
+RUNTIME_PATH="/${ORG}/${DOMAIN}/${MODULE_NAME}/agentruntime"
+echo $RUNTIME_PATH
 
-# Get runtime ARN
-RUNTIME_ARN=$(aws ssm get-parameter \
-  --name "/mdaa/${ENV}/${ORG}-myAgentRuntimeDev-arn" \
+# List all agentcore runtime ARNs
+RUNTIME_ARN=$(aws ssm get-parameters-by-path \
+  --path ${RUNTIME_PATH} \
+  --recursive \
   --region ${REGION} \
-  --query "Parameter.Value" \
-  --output text)
-
-# Get runtime endpoint ARN
-ENDPOINT_ARN=$(aws ssm get-parameter \
-  --name "/mdaa/${ENV}/${ORG}-myAgentRuntimeDev-endpoint-arn" \
-  --region ${REGION} \
-  --query "Parameter.Value" \
+  --query "Parameters[?ends_with(Name, '/arn')].Value | [0]" \
   --output text)
 
 echo "Runtime ARN: ${RUNTIME_ARN}"
-echo "Endpoint ARN: ${ENDPOINT_ARN}"
 ```
 
-### 2. Obtain JWT Token from Cognito
+### 2. Create Cognito User (if it's not created)
 
-To invoke the runtime, you need a valid JWT token from your Cognito User Pool:
+To get a valid JWT token from your Cognito User Pool, you need to create test user:
 
 ```bash
-# Authenticate with Cognito
-aws cognito-idp initiate-auth \
-  --auth-flow USER_PASSWORD_AUTH \
-  --client-id ${COGNITO_CLIENT_ID} \
-  --auth-parameters USERNAME=${USERNAME},PASSWORD=${PASSWORD} \
-  --region ${REGION}
 
-# Extract the IdToken from the response
-ID_TOKEN="<id_token_from_response>"
+USER_POOL_ID=<your-user-pool-id>     # change this! 
+COGNITO_CLIENT_ID=<your-client-id>   # change this! 
+
+# Create user 
+USERNAME="testuser"
+PASSWORD="TempPass1@"
+
+aws cognito-idp admin-create-user \
+ --user-pool-id ${USER_POOL_ID} \
+ --username ${USERNAME} \
+ --temporary-password ${PASSWORD} \
+ --message-action SUPPRESS \
+ --region ${REGION}
+
+aws cognito-idp admin-set-user-password \
+ --user-pool-id ${USER_POOL_ID} \
+ --username ${USERNAME} \
+ --password ${PASSWORD} \
+ --permanent \
+ --region ${REGION}
 ```
 
-### 3. Invoke the Runtime
+### 3. Obtain the Bearer Token from Cognito
 
-Use the Bedrock AgentCore Runtime API to invoke your agent:
+To invoke the runtime, you need a valid Bearer Token from your Cognito User Pool:
 
 ```bash
-# Invoke the runtime endpoint
-aws bedrock-agent-runtime invoke-agent-runtime \
-  --runtime-endpoint-arn ${ENDPOINT_ARN} \
-  --input-text "Hello, what can you help me with?" \
-  --authorization-token ${ID_TOKEN} \
-  --region ${REGION}
+ID_TOKEN=$(aws cognito-idp initiate-auth \
+ --client-id ${COGNITO_CLIENT_ID} \
+ --auth-flow USER_PASSWORD_AUTH \
+ --auth-parameters USERNAME=${USERNAME},PASSWORD=${PASSWORD} \
+ --region ${REGION} \
+ --query 'AuthenticationResult.IdToken' \
+ --output text)
 ```
 
-### 4. Monitor Runtime Performance
+### 4. Invoke the Runtime
+
+Since the runtime is configured for OAuth, you must use an HTTPS request with a Bearer token rather than the AWS CLI:
+
+
+```bash
+# URL-encode the runtime ARN
+ESCAPED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${RUNTIME_ARN}', safe=''))")
+echo $ESCAPED_ARN
+
+curl -X POST "https://bedrock-agentcore.${REGION}.amazonaws.com/runtimes/${ESCAPED_ARN}/invocations?qualifier=DEFAULT" \
+ -H "Authorization: Bearer ${ID_TOKEN}" \
+ -H "Content-Type: application/json" \
+ -d '{"prompt": "Hello, what can you help me with?"}'
+
+```
+
+Successful invocation example:
+```
+"Hello! I'm here to help you with:\n\n1. **Math Calculations** - I can perform a wide range of mathematical operations, including:\n   - Basic arithmetic (addition, subtraction, multiplication, division)\n   - Complex expressions and equations\n   - Solving equations and systems of equations\n   - Calculus operations (derivatives, integrals)\n   - Limits and series expansions\n   - Matrix operations\n   - And much more!\n\n2. **Weather Information** - I can tell you current weather conditions.\n\nFeel free to ask me anything! For example, you could ask:\n- \"Calculate 25 × 3 + 15\"\n- \"Solve x² + 2x - 8 = 0\"\n- \"What's the derivative of sin(x)?\"\n- \"What's the weather?\"\n\nWhat would you like help with?"
+```
+
+### 5. Monitor Runtime Performance
 
 - **CloudWatch Logs**: Monitor agent interactions and container logs
 - **CloudWatch Metrics**: Track runtime metrics in the `bedrock-agentcore` namespace
