@@ -343,6 +343,30 @@ Integrate with enterprise identity providers (SAML, OIDC) for single sign-on and
    - For detailed troubleshooting of runtime behavior, performance, or operational issues, refer to the [Bedrock AgentCore Runtime Troubleshooting Guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-troubleshooting.html)
    - This includes guidance on container startup issues, memory/CPU constraints, timeout configurations, and runtime state management
 
+7. **X-Ray Transaction Search Config already exists error**:
+```
+CREATE_FAILED | AWS::XRay::TransactionSearchConfig | bedrockagentcoreru...archConfig2B8A09A6
+Resource handler returned message: "null" (HandlerErrorCode: AlreadyExists)
+```
+
+**Cause**: The X-Ray TransactionSearchConfig resource is limited to one per AWS account per region. This error occurs when:
+- Another AgentCore runtime has already created this resource in the same account/region
+- Another AWS service or deployment has configured X-Ray transaction search
+- You're deploying multiple agentic applications in the same region
+
+**Solution**: Add `enableTransactionSearch: false` to your runtime configuration in `bedrock-agentcore-runtime/bedrock-agentcore-runtime.yaml`:
+
+```yaml
+agentRuntimeName: helloAgentRuntime
+enableTransactionSearch: false  # Add this line
+description: "Hello Agent Runtime"
+agentRuntimeArtifact:
+  containerConfiguration:
+    codePath: ./agent_core_code
+    platform: linux/arm64
+# ... rest of configuration
+```
+
 ***
 
 ## Next Steps
