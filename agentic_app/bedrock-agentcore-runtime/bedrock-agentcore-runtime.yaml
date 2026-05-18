@@ -28,7 +28,7 @@ authorizerConfiguration:
 
 # Additional policies to complement the minimum required for the execution role permissions
 policies:
-  - policyArn: arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+  - policyArn: arn:aws:iam::aws:policy/CloudWatchLogsReadOnlyAccess
 
 # optional runtime endpoint in addition to the DEFAULT
 # this is the endpoint to add to your qualifier when using the AgentCore client
