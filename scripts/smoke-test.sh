@@ -20,5 +20,13 @@ while IFS= read -r dir; do
   fi
 
   echo "Smoke testing: $dir"
-  mdaa synth -c "$config"
+  if ! output=$(mdaa synth -c "$config" 2>&1); then
+    if echo "$output" | grep -q "spawnSync docker ENOENT"; then
+      # TODO need to make this pipeline work with docker
+      echo "WARNING: $dir synth failed due to missing Docker (asset bundling). Skipping until docker dependency is resolved." >&2
+    else
+      echo "$output" >&2
+      exit 1
+    fi
+  fi
 done
