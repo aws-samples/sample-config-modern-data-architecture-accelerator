@@ -8,8 +8,28 @@ smoke-test:
     # These are just dummy values to prevent certain CDK NAG false positives
     CDK_DEFAULT_ACCOUNT: "111111111111"
     CDK_DEFAULT_REGION: "us-east-1"
+    MDAA_REPO_PATH: "proserve/mdaa/modern-data-architecture-accelerator"
+    KUBERNETES_CPU_REQUEST: '4'
+    KUBERNETES_CPU_LIMIT: '4'
+    KUBERNETES_MEMORY_REQUEST: 8Gi
+    KUBERNETES_MEMORY_LIMIT: 8Gi
+    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: 8Gi
   before_script:
     - apk add --no-cache git nodejs npm bash python3 py3-pip
-    - npm install -g @aws-mdaa/cli
+    - |
+      if [ "${MDAA_FROM_NPM:-}" = "true" ]; then
+        echo "MDAA_FROM_NPM is set — installing mdaa from npmjs.org"
+        npm install -g @aws-mdaa/cli
+      else
+        MDAA_BRANCH="${CI_COMMIT_BRANCH:-${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-main}}"
+        MDAA_REPO_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${MDAA_REPO_PATH}.git"
+        if git clone --depth=1 --branch "$MDAA_BRANCH" "$MDAA_REPO_URL" /tmp/mdaa 2>/dev/null; then
+          echo "Using mdaa from branch: $MDAA_BRANCH"
+        else
+          echo "Branch '$MDAA_BRANCH' not found in mdaa repo — falling back to main"
+          git clone --depth=1 --branch main "$MDAA_REPO_URL" /tmp/mdaa
+        fi
+        export PATH="/tmp/mdaa/bin:$PATH"
+      fi
   script:
     - bash -c 'set -o pipefail; scripts/detect-changes.sh | scripts/smoke-test.sh'
