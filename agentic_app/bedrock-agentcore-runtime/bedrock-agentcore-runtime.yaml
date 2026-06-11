@@ -22,6 +22,18 @@ networkConfiguration:
 # Enforce VPC-only invocation for JWT/OAuth callers via resource-based policy
 enforceVpcOnly: true
 
+# CloudWatch Data Protection (PII masking) and CMK encryption of the runtime log groups
+# are always-on, built-in behavior and cannot be disabled. The built-in identifier set
+# (EmailAddress, CreditCardNumber, Ssn-US, Name, Address, PhoneNumber-US, IpAddress) is
+# always masked. Optionally mask ADDITIONAL identifiers on top of that floor (additive
+# only - cannot narrow the built-in masking).
+dataProtection:
+  additionalIdentifiers:
+    - "DriversLicense-US"
+    - "PassportNumber-US"
+# Retain runtime logs for 90 days
+logRetentionDays: 90
+
 # Remove this section if you just want IAM auth
 authorizerConfiguration:
   customJwtAuthorizer:
