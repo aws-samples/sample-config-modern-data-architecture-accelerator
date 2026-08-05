@@ -34,6 +34,74 @@ dataProtection:
 # Retain runtime logs for 90 days
 logRetentionDays: 90
 
+# Optional CloudWatch alarms on the AgentCore service metrics (namespace
+# AWS/Bedrock-AgentCore). The presence of this block enables alarms; omit it to
+# deploy none. Provide a notification target via exactly one of
+# notificationTopicArn (an existing SNS topic) or createNotificationTopic
+# (a module-created CMK-encrypted topic, reusing the runtime log-group KMS key),
+# and at least one threshold.
+alarms:
+  # Alarm when the error rate exceeds 10% of invocations over the period
+  errorRateThreshold: 10
+  # Alarm when the throttle count exceeds 100 over the period
+  throttleCountThreshold: 100
+  # Create a CMK-encrypted SNS topic for notifications (self-contained; no
+  # pre-existing topic needed). The topic ARN is exported to SSM.
+  createNotificationTopic: true
+  # Addresses subscribed to that topic. Creating a topic is NOT the same as being
+  # notified by it: a topic with no subscribers accepts every alarm notification and
+  # discards it, so the alerting deploys cleanly and is silently inert. Each address
+  # receives an SNS confirmation request and must confirm before delivery begins.
+  # MDAA warns at synth if a created topic has no subscribers.
+  notificationEmails:
+    - "{{context:notification_email}}"
+  # On a low-traffic runtime a single 5-minute period containing one error out of one
+  # invocation is a 100% error rate, so require 2 of 3 breaching periods before
+  # notifying rather than paging on the first blip.
+  evaluationPeriods: 3
+  datapointsToAlarm: 2
+
+# Optional EventBridge rules alerting on individual AgentCore CloudTrail events for
+# this runtime. Where the alarms above detect statistical conditions (a rate or count
+# over a period), these detect single events as they happen. Presence of the block
+# enables it; omit it to create no rules. Requires the alarms block above, whose SNS
+# topic is the default target for every rule.
+#
+# PREREQUISITE - a CloudTrail trail in this account/region logging the matched events.
+# This starter kit does NOT deploy one. Without a trail the rules deploy cleanly and
+# never fire, which reads as coverage you do not have. Two categories behave
+# differently and both matter:
+#   * Management events (UpdateAgentRuntime, DeleteAgentRuntime) are logged by default
+#     on any trail, so `config-change` works as soon as a trail exists.
+#   * Data events (InvokeAgentRuntime, and the authorization failures that come with
+#     it) are OFF by default and need an explicit advanced event selector on the trail
+#     for resource types AWS::BedrockAgentCore::Runtime and
+#     AWS::BedrockAgentCore::RuntimeEndpoint. `auth-failure` stays silent until then.
+# Deploy a trail via the MDAA audit-trail module or create one out-of-band, then
+# confirm rule matches in the EventBridge console before relying on these alerts.
+eventBridgeAlerts:
+  rules:
+    auth-failure:
+      description: "Denied AgentCore invocations"
+      # CloudTrail errorCode values, NOT SDK exception names - for authorization the
+      # two differ. An IAM denial returns AccessDeniedException to the caller but is
+      # recorded by CloudTrail as plain 'AccessDenied'. Do not configure
+      # 'AccessDeniedException': CloudTrail never emits it for authorization, so a rule
+      # using it would match nothing.
+      errorCodes:
+        - "AccessDenied"
+    config-change:
+      description: "Out-of-band runtime configuration change"
+      # Detects lifecycle changes made outside this IaC deployment.
+      eventNames:
+        - "UpdateAgentRuntime"
+        - "DeleteAgentRuntime"
+      # Optionally also invoke a customer-supplied remediation function. MDAA does not
+      # create one: revoking an execution role or stopping sessions is destructive and
+      # site-specific, so the action stays a deliberate decision. Uncomment and set to
+      # a function ARN in this account to enable.
+      # targetLambdaArn: "arn:{{partition}}:lambda:{{region}}:{{account}}:function:my-remediation"
+
 # Remove this section if you just want IAM auth
 authorizerConfiguration:
   customJwtAuthorizer:

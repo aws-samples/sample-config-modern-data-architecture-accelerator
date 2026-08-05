@@ -13,8 +13,9 @@ This configuration deploys a complete agentic application with:
 3. **Network Security**: VPC-secured deployment with private subnets
 4. **Scalable Infrastructure**: Managed runtime with automatic scaling and high availability
 5. **Observability**: CloudWatch logging, metrics, and X-Ray tracing
-6. **API Access**: Runtime endpoint for programmatic agent invocation
-7. **IAM Security**: Least-privilege roles with appropriate permissions
+6. **Operational Alerting**: CloudWatch alarms on error rate and throttling, plus EventBridge rules on security-relevant AgentCore events, notifying a CMK-encrypted SNS topic
+7. **API Access**: Runtime endpoint for programmatic agent invocation
+8. **IAM Security**: Least-privilege roles with appropriate permissions
 
 ***
 
@@ -27,9 +28,11 @@ This configuration deploys a complete agentic application with:
 2. Configure Context Values - Update the `mdaa.yaml` file under the `context:` section with your environment-specific values:
    - `cognito_user_pool_id`: Your Cognito User Pool ID (e.g., `us-east-1_ABC123`)
    - `cognito_client_id`: Your Cognito App Client ID
+   - `vpc_id`: VPC ID containing the subnets below
    - `security_group_id`: Security group ID for the runtime (must allow outbound traffic)
    - `subnet_id_1`: First private subnet ID
    - `subnet_id_2`: Second private subnet ID (for high availability)
+   - `notification_email`: Address subscribed to the alarm/alert SNS topic. SNS sends a confirmation request that must be accepted before any notification is delivered, so use a mailbox you can read.
 
 3. Ensure you are authenticated to your target AWS account and have CDK bootstrapped in your target region.
 
@@ -64,8 +67,10 @@ agentic_app/
 - `organization`: Must be globally unique (used in resource naming)
 - `cognito_user_pool_id`: Your Cognito User Pool ID
 - `cognito_client_id`: Your Cognito App Client ID
+- `vpc_id`: VPC containing the subnets below
 - `security_group_id`: Security group for the runtime
 - `subnet_id_1`, `subnet_id_2`: Private subnet IDs
+- `notification_email`: Address to subscribe to the alarm/alert SNS topic
 
 ```yaml
 region: default
@@ -74,9 +79,11 @@ organization: <org>  # CHANGE THIS
 context:
   cognito_user_pool_id: <>      # CHANGE THIS
   cognito_client_id: <>         # CHANGE THIS
+  vpc_id: <>                    # CHANGE THIS
   security_group_id: <>         # CHANGE THIS
   subnet_id_1: <>               # CHANGE THIS
   subnet_id_2: <>               # CHANGE THIS
+  notification_email: <>        # CHANGE THIS
 
 domains:
   ai:
@@ -237,8 +244,34 @@ Successful invocation example:
 ### 5. Monitor Runtime Performance
 
 - **CloudWatch Logs**: Monitor agent interactions and container logs
-- **CloudWatch Metrics**: Track runtime metrics in the `bedrock-agentcore` namespace
+- **CloudWatch Metrics**: Track AgentCore service metrics (`Invocations`, `SystemErrors`, `UserErrors`, `Throttles`) in the `AWS/Bedrock-AgentCore` namespace. Note this differs from the `bedrock-agentcore` namespace, which is where the agent's own custom metrics are published.
 - **X-Ray Traces**: Analyze request traces for performance optimization
+
+### 6. Confirm the Alerting Subscription
+
+The `alarms` block deploys a CMK-encrypted SNS topic and subscribes `notification_email` to it. **SNS will not deliver anything until that subscription is confirmed** — check the mailbox for the confirmation request and accept it. Until then the alarms deploy and evaluate normally but notify nobody.
+
+Two alarms are created: error rate (`SystemErrors + UserErrors` as a percentage of `Invocations`, over 10%) and throttle count (over 100). Both require 2 of 3 breaching 5-minute periods, which avoids paging on a single error on a low-traffic runtime. Both treat missing data as not breaching, so an idle runtime reports `OK` rather than `INSUFFICIENT_DATA` — note this means a runtime serving zero invocations looks the same as a healthy idle one.
+
+The topic ARN is exported to SSM if you want to attach additional subscribers (a chatbot integration, PagerDuty, an existing distribution list) out of band:
+
+```bash
+aws ssm get-parameters-by-path \
+  --path "/${ORG}/${DOMAIN}/${MODULE_NAME}/topic" \
+  --recursive --region ${REGION} \
+  --query "Parameters[?ends_with(Name, '/arn')].Value | [0]" --output text
+```
+
+### 7. Enable CloudTrail for the EventBridge Rules
+
+The `eventBridgeAlerts` block creates two rules — `auth-failure` and `config-change` — that match this runtime's AgentCore CloudTrail events and notify the same SNS topic.
+
+**These rules require a CloudTrail trail in this account and region, which this starter kit does not deploy.** Without one they deploy cleanly and never fire, which reads as coverage you do not have. Two categories behave differently:
+
+- **Management events** (`UpdateAgentRuntime`, `DeleteAgentRuntime`) are logged by default on any trail, so `config-change` works as soon as a trail exists.
+- **Data events** (`InvokeAgentRuntime`, and the authorization failures that accompany it) are **off by default** and require an explicit advanced event selector for resource types `AWS::BedrockAgentCore::Runtime` and `AWS::BedrockAgentCore::RuntimeEndpoint`. `auth-failure` stays silent until that is enabled.
+
+Deploy a trail using the MDAA audit-trail module or create one out of band, then verify matches in the EventBridge console before relying on these alerts. To remove the rules instead, delete the `eventBridgeAlerts` block from the runtime config.
 
 ***
 
