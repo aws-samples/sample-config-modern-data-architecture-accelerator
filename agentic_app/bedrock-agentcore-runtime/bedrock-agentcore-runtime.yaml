@@ -6,6 +6,20 @@ agentRuntimeArtifact:
     codePath: ./agent_core_code
     platform: linux/arm64
 
+# Only the agent's own settings belong here.
+#
+# The OTEL_* variables are deliberately ABSENT. AgentCore Runtime configures the ADOT
+# SDK inside the container, so setting them here would override a service-maintained
+# configuration - OTEL_SERVICE_NAME especially, which takes precedence over the
+# service's service.name resource attribute and would change the identity this agent
+# reports to the CloudWatch GenAI Observability console. Recipes listing
+# OTEL_RESOURCE_ATTRIBUTES, AGENT_OBSERVABILITY_ENABLED and friends are for agents
+# hosted OUTSIDE AgentCore Runtime; they do not apply here. Please do not add them.
+#
+# Span routing needs nothing here either: MDAA sets UNIFIED_TRACES_DESTINATION_ENABLED
+# to 'true' so spans land in this agent's own log group - encrypted, retained, and
+# PII-masked per the settings below - rather than the account-shared aws/spans group.
+# Add UNIFIED_TRACES_DESTINATION_ENABLED: 'false' only to opt out of that.
 environmentVariables:
   ENVIRONMENT: dev
   LOG_LEVEL: INFO
