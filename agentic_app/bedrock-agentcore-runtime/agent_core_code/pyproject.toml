@@ -5,7 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "aws-opentelemetry-distro>=0.10.0",
+    # ADOT emits the agent's spans. The >=0.18.0 floor is required for the span
+    # destination MDAA sets (UNIFIED_TRACES_DESTINATION_ENABLED) to take effect;
+    # earlier versions install and run fine but ignore it and deliver spans to the
+    # shared aws/spans log group instead of this agent's own protected log group.
+    "aws-opentelemetry-distro>=0.18.0",
+    # Required alongside the ADOT distro for AgentCore observability.
+    "boto3",
     "bedrock-agentcore<=0.1.5",
     "fastapi>=0.124.4",
     "httpx>=0.28.1",

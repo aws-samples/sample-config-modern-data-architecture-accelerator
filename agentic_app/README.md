@@ -12,7 +12,7 @@ This configuration deploys a complete agentic application with:
 2. **Secure Authentication**: JWT-based access control via Amazon Cognito
 3. **Network Security**: VPC-secured deployment with private subnets
 4. **Scalable Infrastructure**: Managed runtime with automatic scaling and high availability
-5. **Observability**: CloudWatch logging, metrics, and X-Ray tracing
+5. **Observability**: CloudWatch logging and metrics, plus ADOT tracing with spans routed to the agent's own log group, so span content inherits its CMK encryption, retention, and PII masking
 6. **Operational Alerting**: CloudWatch alarms on error rate and throttling, plus EventBridge rules on security-relevant AgentCore events, notifying a CMK-encrypted SNS topic
 7. **API Access**: Runtime endpoint for programmatic agent invocation
 8. **IAM Security**: Least-privilege roles with appropriate permissions
@@ -125,6 +125,11 @@ The Strands-based agent implementation includes:
 - **Data Validation**: Pydantic models for request/response validation
 - **Error Handling**: Comprehensive error handling and logging
 - **Model Integration**: Direct integration with Bedrock foundation models via Strands framework
+- **Telemetry**: `aws-opentelemetry-distro>=0.18.0` in `pyproject.toml`, with the Dockerfile `CMD` running the server under `opentelemetry-instrument`
+
+> **The `opentelemetry-instrument` wrapper in the Dockerfile `CMD` is what produces spans.** It auto-instruments Strands and the HTTP stack at startup. Remove it — or drop the ADOT dependency — and you are left with a **working agent that emits no telemetry**: it deploys cleanly, reports healthy, serves requests, and appears in the CloudWatch console identically to an agent receiving no traffic. There is no error to alert on.
+>
+> The `>=0.18.0` floor matters separately: below it, ADOT ignores the span destination and delivers spans to the shared `aws/spans` log group instead of this agent's own protected one.
 
 ### Security & Compliance
 
@@ -245,7 +250,21 @@ Successful invocation example:
 
 - **CloudWatch Logs**: Monitor agent interactions and container logs
 - **CloudWatch Metrics**: Track AgentCore service metrics (`Invocations`, `SystemErrors`, `UserErrors`, `Throttles`) in the `AWS/Bedrock-AgentCore` namespace. Note this differs from the `bedrock-agentcore` namespace, which is where the agent's own custom metrics are published.
-- **X-Ray Traces**: Analyze request traces for performance optimization
+- **Spans**: Read the agent's traces from the **`spans` log stream of this agent's own log group** — `/aws/bedrock-agentcore/runtimes/{agentId}-{endpointName}` — not from X-Ray or the shared `aws/spans` group. MDAA routes them there so span content sits inside the same protection boundary as the agent's logs.
+
+Span content is the agent's decision path: prompts, model inputs and outputs, tool arguments, and tool results. Because those spans land in this agent's log group, they are **encrypted with the module's customer-managed KMS key, subject to the 90-day retention set in the runtime config, and PII-masked** by the same CloudWatch Data Protection policy applied to the agent's logs (including the `DriversLicense-US` and `PassportNumber-US` identifiers added there). In the shared `aws/spans` group they would have none of that, and would be readable by anyone with access to that one account-wide group.
+
+To view them:
+
+```bash
+aws logs start-query \
+  --log-group-name "/aws/bedrock-agentcore/runtimes/${AGENT_ID}-${ENDPOINT_NAME}" \
+  --start-time $(($(date +%s) - 3600)) --end-time $(date +%s) \
+  --query-string 'fields @timestamp, @message | filter @logStream like /spans/ | sort @timestamp desc' \
+  --region ${REGION}
+```
+
+Traces also appear in the [CloudWatch GenAI Observability](https://console.aws.amazon.com/cloudwatch/home#gen-ai-observability) console. **If you see no spans at all**, check the container prerequisites before anything else — see the note under [Agent Implementation](#agent-implementation).
 
 ### 6. Confirm the Alerting Subscription
 
@@ -299,6 +318,12 @@ uv add <package-name>
 # Update lock file
 uv lock
 ```
+
+> **Re-verify span emission after any dependency change.** OpenTelemetry auto-instrumentation works by patching specific internals of specific library versions, so it is version-coupled by nature: upgrading ADOT, Strands, FastAPI, or uvicorn can silently stop spans being produced. Nothing fails, no test catches it, and the agent keeps serving requests normally — the traces simply stop.
+>
+> After regenerating `uv.lock`, redeploy, invoke the agent, and confirm new events land in the `spans` log stream (see [Monitor Runtime Performance](#5-monitor-runtime-performance)). Keep `aws-opentelemetry-distro` at `>=0.18.0`; dropping below that floor sends spans to the shared `aws/spans` group instead of this agent's protected one.
+>
+> Keep the Python version aligned across all three places that declare it — the Dockerfile base image, `requires-python` in `pyproject.toml`, and `.python-version`. They are on 3.12 together; a mismatch fails at `uv sync --frozen` during the image build.
 
 ### Rebuilding the Container
 
