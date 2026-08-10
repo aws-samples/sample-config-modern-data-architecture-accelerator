@@ -1,0 +1,61 @@
+# CloudTrail trail logging the AgentCore events the runtime's eventBridgeAlerts rules match.
+#
+# The rules in bedrock-agentcore-runtime.yaml match "AWS API Call via CloudTrail" events on
+# the default event bus, and CloudTrail only delivers those if a trail in this account and
+# region is logging them. Two categories matter and they behave differently:
+#
+#   * Management events (control plane) - UpdateAgentRuntime, DeleteAgentRuntime.
+#     These drive the `config-change` rule.
+#   * Data events (data plane) - InvokeAgentRuntime, and the AccessDenied recorded on a
+#     denied invocation. OFF by default; they require an explicit selector.
+#     These drive the `auth-failure` rule.
+#
+# Without the data event selectors below, the `auth-failure` rule deploys cleanly and never
+# fires, which reads as covered.
+
+trails:
+  agentcore-audit:
+    # (Required) Destination bucket and CMK, from the audit module in the 'governance'
+    # domain. ssm-org: (rather than ssm-domain:) because that is a DIFFERENT domain - it
+    # expands to /{{org}}/governance/audit/..., where ssm-domain: would look under this
+    # module's own domain and find nothing.
+    cloudTrailAuditBucketName: ssm-org:/governance/audit/bucket/name
+    cloudTrailAuditKmsKeyArn: ssm-org:/governance/audit/kms/arn
+
+    # (Optional, boolean) Keep this true. dataEventSelectors renders CloudTrail ADVANCED
+    # event selectors, which REPLACE a trail's default selectors outright - so a trail
+    # carrying only the data selectors below would capture no control plane events at all,
+    # silently disabling the `config-change` rule. Setting this renders an explicit
+    # management event selector alongside them.
+    includeManagementEvents: true
+
+    # (Optional) Data event selectors, keyed by the name each carries on the trail.
+    # Mutually exclusive with the S3-only `eventSelectors` property: CloudTrail accepts one
+    # selector style per trail, and setting both fails at synth.
+    #
+    # Cost note: data events are billed per event and can be high volume on a busy runtime.
+    # Scope with resourceArns rather than capturing a whole resource type where practical.
+    dataEventSelectors:
+      # Runtime invocations. This is what makes InvokeAgentRuntime - and the AccessDenied on
+      # a denied invocation - visible to EventBridge.
+      AgentCore runtime data events:
+        # (Required) The CloudTrail resources.type to capture. CloudTrail accepts exactly
+        # one resource type per selector, so the runtime endpoint needs its own entry below
+        # rather than a second value here.
+        resourceType: AWS::BedrockAgentCore::Runtime
+        # (Optional) Scope to this deployment's runtime, matched as an ARN prefix. Omit to
+        # capture every resource of the type in the account, which is the broadest and most
+        # expensive option. The path segment after /ai/ is the runtime module's name in
+        # mdaa.yaml, and the last is its agentRuntimeName lowercased.
+        resourceArns:
+          - ssm-domain:/agent-core-app/agentruntime/{{org}}-myagentruntimedev/arn
+        # (Optional) Capture read events, write events, or both. Omit for both;
+        # 'All' is the explicit form of that default.
+        readWriteType: All
+      # Runtime endpoint activity, as a separate selector per the one-resource-type-per-
+      # selector rule above. The endpoint ARN is prefixed by the runtime ARN, so the same
+      # scoping value covers it.
+      AgentCore runtime endpoint data events:
+        resourceType: AWS::BedrockAgentCore::RuntimeEndpoint
+        resourceArns:
+          - ssm-domain:/agent-core-app/agentruntime/{{org}}-myagentruntimedev/arn

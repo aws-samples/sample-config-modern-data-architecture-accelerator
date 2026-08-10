@@ -1,0 +1,16 @@
+# Role granted read access to the CloudTrail audit data.
+#
+# The audit module's readRoles is what puts a principal on the audit bucket policy AND on
+# the audit CMK's key-user statement. Without it the trail still delivers, but the records
+# are undecryptable: the CMK grants decrypt only to the role IDs listed there, not to
+# account administrators by default.
+#
+# Created here rather than referencing an existing role by ARN so this sample is portable
+# across accounts. Role names differ per account, and a hardcoded ARN fails role
+# resolution at deploy time in any account that does not have that exact role.
+generateRoles:
+  # Referenced from audit/audit.yaml as `id: generated-role-id:audit-reader`.
+  audit-reader:
+    # Assumable by principals in this account, so an operator session can assume it to
+    # read trail records out of the audit bucket.
+    trustedPrincipal: this_account

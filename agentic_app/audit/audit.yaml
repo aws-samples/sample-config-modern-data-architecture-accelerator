@@ -1,0 +1,15 @@
+# Audit bucket and KMS CMK that the CloudTrail trail delivers to.
+#
+# The audit-trail module does not create its own destination: it takes an existing bucket
+# and key by SSM reference. This module owns both, and its bucket policy already grants
+# cloudtrail.amazonaws.com the GetBucketAcl/PutObject it needs, scoped with aws:SourceArn
+# to trails in this account.
+#
+# This module also creates a Glue database and a `cloudtrail_audit` table with partition
+# projection, so the delivered records are queryable from Athena.
+
+# Roles granted read access to the audit logs and decrypt on the audit key. This is what
+# makes delivered trail records readable: the audit CMK grants decrypt only to the role IDs
+# listed here.
+readRoles:
+  - id: generated-role-id:audit-reader
