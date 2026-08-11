@@ -97,6 +97,16 @@ eventBridgeAlerts:
   rules:
     auth-failure:
       description: "Denied AgentCore invocations"
+      # Which denials this rule sees depends on how the runtime is authorized. This config
+      # uses the JWT authorizer below, so a caller presenting a bad or expired Cognito
+      # token is refused by that authorizer and never reaches IAM: no IAM authorization
+      # failure is recorded and this rule stays quiet. What it does catch here are
+      # resource-policy denials - notably the enforceVpcOnly denial for a caller outside
+      # the VPC, which CloudTrail records as an authorization failure. So do not read a
+      # quiet auth-failure rule as proof it is misconfigured; check the trail records
+      # first. Under IAM auth (no authorizerConfiguration) denied callers are IAM
+      # principals and their denials are recorded directly.
+      #
       # CloudTrail errorCode values, NOT SDK exception names - for authorization the
       # two differ. An IAM denial returns AccessDeniedException to the caller but is
       # recorded by CloudTrail as plain 'AccessDenied'. Do not configure

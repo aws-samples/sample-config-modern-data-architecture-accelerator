@@ -28,7 +28,32 @@ context:
 # One or more domains may be specified. Domain name will be incorporated by default naming implementation
 # to prefix all resource names.
 domains:
-  # The named of the domain. In this case, we are building a 'dataops' domain.
+  # Account-wide governance resources, kept in their own domain so they are owned and
+  # named separately from the application that consumes them. Declared FIRST: domains
+  # deploy in the order they appear here, and the 'ai' domain below reads this domain's
+  # SSM parameters.
+  governance:
+    environments:
+      dev:
+        modules:
+          # This module creates the role granted read access to the audit bucket and
+          # decrypt on the audit CMK. It must stay ABOVE audit: both are deployStage 1, and
+          # modules within a stage deploy in the order they appear here, so this publishes
+          # the SSM parameter that audit's 'generated-role-id:audit-reader' resolves.
+          roles:
+            module_path: "@aws-mdaa/roles"
+            module_configs:
+              - ./roles/roles.yaml
+
+          # This module creates the audit bucket and KMS CMK that the CloudTrail trail in
+          # the 'ai' domain delivers to, plus a Glue table for querying the records from
+          # Athena. One audit destination can serve many trails.
+          audit:
+            module_path: "@aws-mdaa/audit"
+            module_configs:
+              - ./audit/audit.yaml
+
+  # The named of the domain. In this case, we are building an 'ai' domain.
   ai:
     # One or more environments may be specified, typically along the lines of 'dev', 'test', and/or 'prod'
     environments:
@@ -42,3 +67,18 @@ domains:
             module_path: "@aws-mdaa/bedrock-agentcore-runtime"
             module_configs:
               - ./bedrock-agentcore-runtime/bedrock-agentcore-runtime.yaml
+
+          # This module creates the CloudTrail trail that logs the AgentCore management and
+          # data events this runtime's eventBridgeAlerts rules match. Without it those rules
+          # deploy cleanly and never fire.
+          #
+          # It lives in this domain rather than in 'governance' because the trail is scoped
+          # to this runtime: it reads the runtime ARN from the module above. The audit
+          # bucket and key it writes to are account-wide and stay in 'governance'.
+          #
+          # audit-trail is deployStage 2, so it deploys after the stage-1 runtime above
+          # regardless of the order here.
+          audit-trail:
+            module_path: "@aws-mdaa/audit-trail"
+            module_configs:
+              - ./audit-trail/audit-trail.yaml
