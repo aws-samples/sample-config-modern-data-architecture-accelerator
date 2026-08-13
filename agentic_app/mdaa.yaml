@@ -13,9 +13,10 @@ organization: test-agentic-org
 # TODO: Set appropriate context values for your environment.
 # All values below are placeholders and must be replaced.
 context:
-  # remove these two cognito entries if not using cognito for runtime auth
-  cognito_user_pool_id: us-east-1_000000001 # TODO: Replace with your Cognito User Pool ID
-  cognito_client_id: example_ClientId_000 # TODO: Replace with your Cognito Client ID
+  # No Cognito IDs are needed here: the runtime config uses the `cognito` authorizer
+  # option, so MDAA creates the user pool and app client and wires them to the runtime
+  # itself. Only add cognito_user_pool_id / cognito_client_id if you switch that config
+  # to the `discoveryUrl` option to use an identity provider you already run.
   vpc_id: vpc-00000000000000001 # TODO: Replace with your VPC ID (must contain the subnets below)
   security_group_id: sg-00000000000000001 # TODO: Replace with your Security Group ID
   subnet_id_1: subnet-00000000000000001 # TODO: Replace with your first Subnet ID
