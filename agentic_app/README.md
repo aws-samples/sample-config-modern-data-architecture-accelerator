@@ -9,7 +9,7 @@ This sample configuration demonstrates building a simple agentic application usi
 This configuration deploys a complete agentic application with:
 
 1. **Custom Agent Runtime**: Containerized agent using the Strands framework for flexible agent logic
-2. **Secure Authentication**: JWT-based access control via Amazon Cognito
+2. **Secure Authentication**: JWT-based access control via an Amazon Cognito user pool that MDAA creates and configures, with threat protection, a strong password policy, short-lived tokens, and MFA required. People sign in **interactively in a browser** through Cognito's managed login (hosted UI), which prompts each user to set their password and register a TOTP authenticator on first sign-in, then returns an authorization code to exchange for the token used to invoke the agent
 3. **Network Security**: VPC-secured deployment with private subnets
 4. **Scalable Infrastructure**: Managed runtime with automatic scaling and high availability
 5. **Observability**: CloudWatch logging and metrics, plus ADOT tracing with spans routed to the agent's own log group, so span content inherits its CMK encryption, retention, and PII masking
@@ -26,8 +26,6 @@ This configuration deploys a complete agentic application with:
 1. Edit the `mdaa.yaml` to specify an organization name. This must be a globally unique name, as it is used in the naming of all deployed resources.
 
 2. Configure Context Values - Update the `mdaa.yaml` file under the `context:` section with your environment-specific values:
-   - `cognito_user_pool_id`: Your Cognito User Pool ID (e.g., `us-east-1_ABC123`)
-   - `cognito_client_id`: Your Cognito App Client ID
    - `vpc_id`: VPC ID containing the subnets below
    - `security_group_id`: Security group ID for the runtime (must allow outbound traffic)
    - `subnet_id_1`: First private subnet ID
@@ -65,8 +63,6 @@ agentic_app/
 #### mdaa.yaml - Main Configuration
 **⚠️ Required Changes Before Deployment:**
 - `organization`: Must be globally unique (used in resource naming)
-- `cognito_user_pool_id`: Your Cognito User Pool ID
-- `cognito_client_id`: Your Cognito App Client ID
 - `vpc_id`: VPC containing the subnets below
 - `security_group_id`: Security group for the runtime
 - `subnet_id_1`, `subnet_id_2`: Private subnet IDs
@@ -77,8 +73,6 @@ region: default
 organization: <org>  # CHANGE THIS
 
 context:
-  cognito_user_pool_id: <>      # CHANGE THIS
-  cognito_client_id: <>         # CHANGE THIS
   vpc_id: <>                    # CHANGE THIS
   security_group_id: <>         # CHANGE THIS
   subnet_id_1: <>               # CHANGE THIS
@@ -134,7 +128,7 @@ The Strands-based agent implementation includes:
 ### Security & Compliance
 
 The deployment implements:
-- **Authentication**: JWT-based authentication via Amazon Cognito
+- **Authentication**: JWT-based authentication via Amazon Cognito, with interactive browser sign-in through managed login and TOTP MFA required of every user
 - **Authorization**: Fine-grained IAM permissions for runtime execution
 - **Encryption**: Data encryption in transit and at rest
 - **Network Isolation**: VPC deployment with private subnets
@@ -182,52 +176,134 @@ RUNTIME_ARN=$(aws ssm get-parameters-by-path \
 echo "Runtime ARN: ${RUNTIME_ARN}"
 ```
 
-### 2. Create Cognito User (if it's not created)
+### 2. Create Cognito User
 
-To get a valid JWT token from your Cognito User Pool, you need to create test user:
+MDAA created the user pool as part of the deployment and published its identifiers to SSM,
+so read them from there rather than looking them up in the console. The pool starts empty:
+`selfSignUpEnabled` is false, so an administrator creates users.
 
 ```bash
+COGNITO_PATH="/${ORG}/${DOMAIN}/${MODULE_NAME}/cognito"
 
-USER_POOL_ID=<your-user-pool-id>     # change this! 
-COGNITO_CLIENT_ID=<your-client-id>   # change this! 
+USER_POOL_ID=$(aws ssm get-parameters-by-path \
+  --path ${COGNITO_PATH} \
+  --recursive \
+  --region ${REGION} \
+  --query "Parameters[?ends_with(Name, '/user-pool-id')].Value | [0]" \
+  --output text)
 
-# Create user 
-USERNAME="testuser"
-PASSWORD="TempPass1@"
+COGNITO_CLIENT_ID=$(aws ssm get-parameters-by-path \
+  --path ${COGNITO_PATH} \
+  --recursive \
+  --region ${REGION} \
+  --query "Parameters[?ends_with(Name, '/client-id')].Value | [0]" \
+  --output text)
+
+echo "User Pool: ${USER_POOL_ID}  Client: ${COGNITO_CLIENT_ID}"
+
+# The username must be an email address: the pool signs in by email alias
+# (UsernameAttributes: ['email']), so Cognito rejects a non-email username with
+# "Username should be an email."
+#
+# The password is temporary, and must satisfy the pool's policy: 8+ characters with
+# at least one uppercase, one lowercase, one digit, and one symbol. You will be asked
+# to replace it during the browser sign-in in the next step, which is where the user
+# chooses a password only they know.
+USERNAME="testuser@example.com"
+TEMP_PASSWORD="TempPass1@"
 
 aws cognito-idp admin-create-user \
  --user-pool-id ${USER_POOL_ID} \
  --username ${USERNAME} \
- --temporary-password ${PASSWORD} \
+ --temporary-password ${TEMP_PASSWORD} \
  --message-action SUPPRESS \
- --region ${REGION}
-
-aws cognito-idp admin-set-user-password \
- --user-pool-id ${USER_POOL_ID} \
- --username ${USERNAME} \
- --password ${PASSWORD} \
- --permanent \
  --region ${REGION}
 ```
 
-### 3. Obtain the Bearer Token from Cognito
+`--message-action SUPPRESS` stops Cognito emailing the invitation, since `testuser@example.com` is not a real mailbox. Drop it when you create a user with an address that is.
 
-To invoke the runtime, you need a valid Bearer Token from your Cognito User Pool:
+### 3. Sign In Through Managed Login and Obtain a Token
+
+The runtime config sets `hostedUi`, so this pool has a Cognito-hosted sign-in page and the app client uses the **authorization code grant**: a person authenticates in a browser and the browser is redirected back with a short-lived `code` that you exchange for tokens. There is deliberately no single-API-call alternative — configuring `hostedUi` disables the plaintext-password auth flow, and this sample requires MFA, which needs a human present to enrol an authenticator.
+
+Build the sign-in URL:
 
 ```bash
-ID_TOKEN=$(aws cognito-idp initiate-auth \
- --client-id ${COGNITO_CLIENT_ID} \
- --auth-flow USER_PASSWORD_AUTH \
- --auth-parameters USERNAME=${USERNAME},PASSWORD=${PASSWORD} \
- --region ${REGION} \
- --query 'AuthenticationResult.IdToken' \
- --output text)
+# The hosted-UI domain prefix. Published to SSM only because `hostedUi` is configured.
+COGNITO_DOMAIN=$(aws ssm get-parameters-by-path \
+  --path ${COGNITO_PATH} \
+  --recursive \
+  --region ${REGION} \
+  --query "Parameters[?ends_with(Name, '/domain')].Value | [0]" \
+  --output text)
+
+AUTH_BASE="https://${COGNITO_DOMAIN}.auth.${REGION}.amazoncognito.com"
+
+# Must match a URL in the runtime config's hostedUi.callbackUrls exactly, here and in
+# the token exchange below — Cognito compares it as a string in both requests.
+REDIRECT_URI="http://localhost:8000/callback"
+
+# PKCE (RFC 7636). Cognito accepts a code grant without it, but this app client is
+# public (no client secret), so the verifier is the only thing proving that whoever
+# redeems the code is whoever started the sign-in. Cognito supports S256 only.
+#
+# The `state` and `nonce` parameters are omitted only because you are driving this by
+# hand and there is no application to validate them against. A real front end should
+# send both: `state` is its CSRF defence on the redirect, `nonce` its replay defence
+# on the ID token.
+CODE_VERIFIER=$(openssl rand -base64 60 | tr -d '\n=' | tr '/+' '_-')
+CODE_CHALLENGE=$(printf '%s' "${CODE_VERIFIER}" | openssl dgst -sha256 -binary | base64 | tr -d '\n=' | tr '/+' '_-')
+
+echo "${AUTH_BASE}/oauth2/authorize?response_type=code&client_id=${COGNITO_CLIENT_ID}&redirect_uri=${REDIRECT_URI}&scope=openid+profile+email&code_challenge_method=S256&code_challenge=${CODE_CHALLENGE}"
+```
+
+Open that URL in a browser and complete the sign-in as the user created above. Managed login walks through the whole first-login sequence:
+
+1. **Sign in** with `testuser@example.com` and the temporary password
+2. **Choose a new password** — Cognito requires this because the password was created as temporary
+3. **Set up MFA**: scan the QR code with an authenticator app and enter the six-digit code. This step is what `mfa: required` means, and managed login providing it is the reason the sample can keep that default
+
+Cognito then redirects the browser to `http://localhost:8000/callback?code=...`. **Nothing is listening on port 8000, so the browser shows a connection error — that is expected.** The value you need is the `code` query parameter in the address bar. If you would rather not read it off the URL bar, run `python3 -m http.server 8000` in another terminal before signing in; its request log prints the full callback path, code included.
+
+Exchange the code for tokens:
+
+```bash
+CODE="<paste the code parameter from the redirect URL>"
+
+TOKENS=$(curl -s -X POST "${AUTH_BASE}/oauth2/token" \
+ -H 'Content-Type: application/x-www-form-urlencoded' \
+ --data-urlencode "grant_type=authorization_code" \
+ --data-urlencode "client_id=${COGNITO_CLIENT_ID}" \
+ --data-urlencode "code=${CODE}" \
+ --data-urlencode "redirect_uri=${REDIRECT_URI}" \
+ --data-urlencode "code_verifier=${CODE_VERIFIER}")
+
+ID_TOKEN=$(printf '%s' "${TOKENS}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id_token"])')
+REFRESH_TOKEN=$(printf '%s' "${TOKENS}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["refresh_token"])')
+```
+
+If either extraction raises a `KeyError`, run `echo "${TOKENS}"` — Cognito returned an OAuth error object rather than tokens, and the `error` value in it names the cause (see [Troubleshooting](#common-issues)).
+
+The code is **single-use and valid for five minutes**, so exchange it promptly; redeeming it twice returns `invalid_grant`. Pass the **ID token** to the runtime — Cognito puts the app client ID in the ID token's `aud` claim, which is what the runtime's authorizer validates, but in the access token's `client_id` claim instead.
+
+The ID token expires after 15 minutes (`idTokenValidityMinutes`). Mint a fresh one from the refresh token rather than repeating the browser sign-in — refresh tokens last one day:
+
+```bash
+ID_TOKEN=$(curl -s -X POST "${AUTH_BASE}/oauth2/token" \
+ -H 'Content-Type: application/x-www-form-urlencoded' \
+ --data-urlencode "grant_type=refresh_token" \
+ --data-urlencode "client_id=${COGNITO_CLIENT_ID}" \
+ --data-urlencode "refresh_token=${REFRESH_TOKEN}" \
+ | python3 -c 'import json,sys; print(json.load(sys.stdin)["id_token"])')
 ```
 
 ### 4. Invoke the Runtime
 
 Since the runtime is configured for OAuth, you must use an HTTPS request with a Bearer token rather than the AWS CLI:
 
+> **Run this from inside the VPC.** `enforceVpcOnly: true` in the runtime config attaches a resource policy that denies any invocation not arriving through the VPC's `bedrock-agentcore` endpoint, so this request returns `AccessDenied` from a machine on the public internet however valid the token is. Run it from an EC2 instance in `vpc_id`, or from a host with VPN or Direct Connect access into that VPC.
+>
+> The browser sign-in in step 3 has no such constraint — Cognito's managed login and token endpoint are public — so signing in on your laptop and copying `ID_TOKEN` over to where you run this is fine.
 
 ```bash
 # URL-encode the runtime ARN
@@ -352,7 +428,7 @@ Extend the agent with custom tools and APIs to interact with external systems, d
 Implement Step Functions or other orchestration services to coordinate multi-step agent workflows.
 
 ### Advanced Authentication
-Integrate with enterprise identity providers (SAML, OIDC) for single sign-on and fine-grained access control.
+Integrate with enterprise identity providers (SAML, OIDC) for single sign-on, so users sign in with their corporate credentials instead of a Cognito-local password. This is a `federation` block in the runtime config's `cognito` section — it requires `hostedUi`, which this sample already configures, so the hosted sign-in page starts offering the enterprise provider as soon as it is added. Cognito applies no MFA of its own to federated users, so enforce MFA at that provider and set `mfa: off` here once every user is federated.
 
 ***
 
@@ -373,35 +449,42 @@ Integrate with enterprise identity providers (SAML, OIDC) for single sign-on and
    - Update the `region` field in your `mdaa.yaml` to a supported region
    - Ensure your VPC, subnets, and security groups are in the same supported region
 
-2. **JWT authentication failures**:
-   - Verify the Cognito User Pool ID and Client ID are correct in the configuration
-   - Ensure the discovery URL is properly formatted and ends with `/.well-known/openid-configuration`
-   - Check that the JWT token's `aud` claim matches the configured `allowedAudience`
-   - Verify the token hasn't expired
+2. **Sign-in and token exchange failures**:
+   - The sign-in URL does not load, or `AUTH_BASE` contains `None`: `COGNITO_DOMAIN` did not resolve. The `domain` SSM parameter exists only when `hostedUi` is configured in the runtime config — check it is still there, and that `USER_POOL_ID` and `COGNITO_CLIENT_ID` also resolved to real values in step 2, since an empty variable produces a confusing failure further along
+   - Redirected back with `?error=invalid_request` or a redirect-mismatch error: `REDIRECT_URI` must match one of `hostedUi.callbackUrls` character for character, in both the authorize URL and the token exchange
+   - `invalid_grant` from `/oauth2/token`: the code was already redeemed or is more than five minutes old — start a fresh sign-in. Note the browser retains its managed login session, so a repeat authorize request may return a new code without re-prompting
+   - `invalid_client` from `/oauth2/token`: `client_id` does not match the app client the code was issued to
+   - Stuck at the MFA setup screen: this pool sets `mfa: required`, so enrolling an authenticator is mandatory before any token is issued. To deploy a pool that issues tokens without it — a non-interactive caller, say — set `mfa: optional` in the runtime config
 
-3. **Container build or deployment failures**:
+3. **JWT authentication failures at the runtime**:
+   - Confirm you passed the **ID token**, not the access token: Cognito puts the client ID in the ID token's `aud` claim, which is what `allowedAudience` validates, but in the access token's `client_id` claim
+   - Check the token has not expired — tokens are valid for 15 minutes by default (`idTokenValidityMinutes`). Refresh it as shown at the end of step 3 rather than signing in again
+   - If you switched to the `discoveryUrl` option, ensure the URL ends with `/.well-known/openid-configuration`
+
+4. **Container build or deployment failures**:
    - Check that Docker is installed and running on your deployment machine
    - Verify ECR permissions for pushing images
    - Ensure the specified platform (`linux/arm64` or `linux/amd64`) is supported
    - Review CloudWatch logs for container startup errors
 
-4. **Network connectivity issues**:
+5. **Network connectivity issues**:
    - Verify security groups allow outbound traffic to AWS services
    - Ensure subnets have routes to NAT Gateway or VPC endpoints for AWS service access
    - Check that the runtime can reach Bedrock endpoints
    - Verify VPC DNS resolution is enabled
 
-5. **Runtime invocation failures**:
+6. **Runtime invocation failures**:
+   - `AccessDenied` with a token that authenticated fine: the request did not arrive through the VPC's `bedrock-agentcore` endpoint, which `enforceVpcOnly: true` requires — see the note in [step 4](#4-invoke-the-runtime)
    - Confirm the runtime is in "Active" state in the Bedrock console
    - Verify the runtime endpoint is properly configured
    - Check IAM permissions for the runtime execution role
    - Review CloudWatch logs for detailed error messages
 
-6. **AgentCore runtime-specific issues after successful deployment**:
+7. **AgentCore runtime-specific issues after successful deployment**:
    - For detailed troubleshooting of runtime behavior, performance, or operational issues, refer to the [Bedrock AgentCore Runtime Troubleshooting Guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-troubleshooting.html)
    - This includes guidance on container startup issues, memory/CPU constraints, timeout configurations, and runtime state management
 
-7. **X-Ray Transaction Search Config already exists error**:
+8. **X-Ray Transaction Search Config already exists error**:
 ```
 CREATE_FAILED | AWS::XRay::TransactionSearchConfig | bedrockagentcoreru...archConfig2B8A09A6
 Resource handler returned message: "null" (HandlerErrorCode: AlreadyExists)

@@ -24,7 +24,8 @@ environmentVariables:
   ENVIRONMENT: dev
   LOG_LEVEL: INFO
 
-# MDAA requires VPC configuration (security requirement)
+# MDAA requires VPC configuration (security requirement).
+# vpcId is required when enforceVpcOnly is true.
 networkConfiguration:
   vpcId: "{{context:vpc_id}}"
   securityGroups:
@@ -32,8 +33,35 @@ networkConfiguration:
   subnets:
     - "{{context:subnet_id_1}}"
     - "{{context:subnet_id_2}}"
+  # Create the AgentCore interface VPC endpoint (com.amazonaws.{{region}}.bedrock-agentcore).
+  # Presence of this block opts in; an empty block ({}) accepts all defaults - Private DNS,
+  # an endpoint policy restricted to AgentCore invoke actions, and a security group allowing
+  # HTTPS only from the application security groups above.
+  #
+  # Required here because enforceVpcOnly is set below. That resource policy tests
+  # aws:SourceVpc, and a request only carries that condition key when it arrives through a
+  # VPC endpoint - without one, nothing can invoke the runtime.
+  #
+  # If the VPC already has a bedrock-agentcore endpoint (created by AWS Landing Zone
+  # Accelerator or a central networking team, say), REMOVE this block: only one endpoint
+  # with Private DNS is allowed per service per VPC, and a second one fails to deploy.
+  vpcEndpoint: {}
+  # To customize, replace the line above with a populated block, e.g.:
+  # vpcEndpoint:
+  #   # Restrict the endpoint policy to specific IAM principals. Omitted here because the
+  #   # runtime uses JWT auth below, and OAuth callers have no IAM identity for an endpoint
+  #   # policy to match - restricting principals would lock them out.
+  #   endpointPolicy:
+  #     allowPrincipals:
+  #       - 'arn:aws:iam::{{account}}:role/my-caller-role'
+  #   # Also create supporting endpoints (ECR API, ECR Docker, STS, CloudWatch Logs) for
+  #   # fully private subnets with no NAT gateway.
+  #   createSupportingEndpoints: true
 
-# Enforce VPC-only invocation for JWT/OAuth callers via resource-based policy
+# Enforce VPC-only invocation for JWT/OAuth callers via resource-based policy.
+# SCPs and endpoint policies cannot restrict OAuth callers, since they are not IAM
+# principals - hence a resource policy with an aws:SourceVpc condition, satisfied by the
+# vpcEndpoint above.
 enforceVpcOnly: true
 
 # CloudWatch Data Protection (PII masking) and CMK encryption of the runtime log groups
@@ -126,13 +154,90 @@ eventBridgeAlerts:
       # a function ARN in this account to enable.
       # targetLambdaArn: "arn:{{partition}}:lambda:{{region}}:{{account}}:function:my-remediation"
 
-# Remove this section if you just want IAM auth
+# Remove this section if you just want IAM auth.
+#
+# Exactly one of `cognito` or `discoveryUrl` is required. This config uses `cognito`, so
+# MDAA creates the user pool and app client and composes the discovery URL and audience
+# itself - no pool needs to exist beforehand, and no IDs need to be pasted into mdaa.yaml.
+# The pool ID, client ID, and discovery URL are published to SSM after deploy (see the
+# README's post-deployment steps).
+#
+# To point at an identity provider you already run instead, replace the whole `cognito`
+# block with:
+#   discoveryUrl: "https://my-idp.example.com/.well-known/openid-configuration"
+#   allowedAudience:
+#     - "my-existing-client-id"
 authorizerConfiguration:
   customJwtAuthorizer:
-    discoveryUrl: "https://cognito-idp.{{region}}.amazonaws.com/{{context:cognito_user_pool_id}}/.well-known/openid-configuration"
-    # AllowedAudience checks the 'aud' claim in JWT (Cognito standard - this is what Cognito uses for Client ID)
-    allowedAudience:
-      - "{{context:cognito_client_id}}"
+    cognito:
+      # (Optional) ID and access token validity in minutes. Defaults to 15. Short-lived
+      # tokens narrow the window in which a leaked token stays usable, which matters more
+      # for autonomous agents than for interactive users because JWT validation is offline
+      # and cannot revoke an individual token. Accepts 5-60.
+      idTokenValidityMinutes: 15
+      # (Optional) MFA enforcement: off | optional | required. Defaults to required,
+      # which is what this sample uses: every user registers a TOTP authenticator before
+      # their first token.
+      #
+      # `required` is workable here because `hostedUi` below is configured - Cognito's
+      # managed login is what walks each user through that registration. Without a hosted
+      # UI your own application has to drive the enrolment flow itself (see the module
+      # README's MFA section), and a caller with no human present cannot enrol at all -
+      # set `optional` for that case, since storing a TOTP seed beside the password would
+      # make the second factor a second copy of the first.
+      mfa: required
+      # (Optional) Pool removal policy: destroy | retain. Defaults to retain, which keeps
+      # the pool and its users when the stack is deleted and enables Cognito deletion
+      # protection. Set destroy for a throwaway deployment you want torn down completely -
+      # that deletes the pool and every user record in it.
+      removalPolicy: retain
+      # Cognito's hosted UI (managed login), which is what makes an interactive human
+      # sign-in possible: the user authenticates in a browser, enrols their TOTP
+      # authenticator, and the browser is redirected back with an authorization code to
+      # exchange for tokens. Omit this block and the app client has OAuth disabled
+      # entirely. Two consequences worth knowing before adding it:
+      #
+      #   * The app client drops the plaintext-password auth flow (USER_PASSWORD_AUTH),
+      #     because sign-in goes through the code grant instead. There is no
+      #     single-API-call way to obtain a token while this block is present - the
+      #     README's post-deployment steps use the browser flow.
+      #   * Only the authorization code grant is enabled. The implicit grant is never
+      #     offered: it returns tokens in the redirect fragment, where they land in
+      #     browser history and referrer headers.
+      hostedUi:
+        # Redirect URIs permitted after a successful sign-in. Required - a hosted UI with
+        # no callback URL cannot complete the code grant. Must be https, except
+        # http://localhost, which Cognito permits for local testing.
+        #
+        # localhost here so the sample needs no front end deployed: you sign in through
+        # managed login in a browser and read the `code` parameter off the redirect that
+        # nothing is listening for (see the README's post-deployment steps). Replace both
+        # URLs with your front end's real https endpoints once it exists.
+        callbackUrls:
+          - "http://localhost:8000/callback"
+        logoutUrls:
+          - "http://localhost:8000/logout"
+        # (Optional) Hosted-UI domain prefix. Defaults to an MDAA naming-derived value,
+        # published to SSM after deploy so the README can read it back. Cognito domain
+        # prefixes are globally unique per region, so set this explicitly if deployment
+        # reports that the domain already exists.
+        # cognitoDomainPrefix: "my-agent-login"
+        # (Optional) OAuth scopes. Defaults to openid, profile, email, which is what this
+        # sample uses. Keep `openid` in any override: Cognito issues an ID token only when
+        # it is requested, and the ID token is what the runtime's authorizer validates.
+      # (Optional) Federation with an enterprise IdP, so users sign in with their existing
+      # corporate credentials instead of a Cognito-local password. At most one of saml or
+      # oidc. It requires the `hostedUi` block above - Cognito signs federated users in
+      # only through the hosted-UI endpoints, never InitiateAuth:
+      #   federation:
+      #     saml:
+      #       metadataUrl: 'https://login.microsoftonline.com/{tenant}/federationmetadata/2007-06/federationmetadata.xml'
+      # Cognito applies no MFA of its own to federated users - the IdP authenticates them -
+      # so enforce MFA there and set `mfa: off` here if every user is federated.
+    #
+    # `allowedAudience` is deliberately absent: MDAA adds the app client it creates, and
+    # callers on this path present the Cognito ID token whose `aud` claim carries that
+    # client ID. Set it only to accept ADDITIONAL audiences beyond the created client.
 
 # Optional: Restrict model invocation to specific Bedrock model arns (least privilege)
 allowedModelArns:
