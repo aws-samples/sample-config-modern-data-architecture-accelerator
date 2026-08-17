@@ -1,0 +1,33 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EnforceJwtAuthorizerOnGateways",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateGateway",
+        "bedrock-agentcore:UpdateGateway"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "bedrock-agentcore:GatewayAuthorizerType": "CUSTOM_JWT"
+        }
+      }
+    },
+    {
+      "Sid": "EnforceJwtAuthorizerOnRuntimes",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateAgentRuntime",
+        "bedrock-agentcore:UpdateAgentRuntime"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "bedrock-agentcore:RuntimeAuthorizerType": "CUSTOM_JWT"
+        }
+      }
+    }
+  ]
+}

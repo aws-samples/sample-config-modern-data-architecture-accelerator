@@ -1,0 +1,51 @@
+# SigV4 (IAM) inbound auth. Layer over runtime-base.yaml.
+#
+# ⚠️ NOT DEPLOYED. ../mdaa.yaml layers runtime-jwt.yaml instead. To switch:
+#   1. in ../mdaa.yaml, swap runtime-jwt.yaml for runtime-sigv4.yaml in the
+#      agent-core-app module_configs
+#   2. uncomment ../roles/roles-callers.yaml in the roles module_configs, which adds the
+#      Admin / Operator / Reader caller roles
+#   3. update the resourceArns in ../audit-trail/audit-trail.yaml to this runtime's name
+# Deploy one path or the other, not both — see enableTransactionSearch in the base.
+#
+# THERE IS NO authorizerConfiguration BLOCK, AND THAT IS THE MECHANISM. Omitting it selects
+# SigV4; IAM inbound is the module default, not something you switch on. This is also why the
+# base carries no authorizer and each path adds its own: a layer can add settings but cannot
+# remove them, so the absence has to come from the base.
+#
+# WHAT THE BASE SETTINGS MEAN ON THIS PATH
+#
+#   * enforceVpcOnly is DEFENCE IN DEPTH, not the perimeter. Callers here are IAM principals,
+#     so SCPs, the endpoint policy, and identity-based policies all already reach them. This
+#     is a second per-resource check that survives an SCP being detached.
+#   * networkConfiguration.vpcEndpoint is one layer of several rather than the only one — and
+#     here its policy can name principals, which is what allowPrincipals below does.
+#   * eventBridgeAlerts auth-failure is materially more useful here: every caller is an IAM
+#     principal, so a denied invocation is recorded as an IAM authorization failure naming the
+#     role that attempted it.
+#   * dataProtection masking is backed by the logs:Unmask deny in ../roles/roles.yaml, the
+#     same file the JWT path uses — that role is not path-specific.
+
+# =====================================================================================
+# THE ONLY SETTING THIS PATH ADDS.
+#
+# SigV4 callers are IAM principals, so the endpoint policy can restrict WHO reaches AgentCore
+# through it. Set to the operator role from ../roles/roles-callers.yaml, so the endpoint
+# admits that role and nothing else. MDAA warns at synth if a SigV4 runtime leaves it unset.
+#
+# ssm-org: (not ssm-domain:) because the roles module is in a DIFFERENT domain — this expands
+# to /{{org}}/governance/generated-role/agentcore-operator/arn.
+#
+# Note there is no `roles/` module segment in that path. The roles module publishes its
+# generated-role parameters UNSCOPED, directly under the domain, unlike most module outputs.
+# Adding the module name gives a path that does not exist, and the deploy fails at changeset
+# creation with "Unable to fetch parameters [...] from parameter store for this account."
+#
+# The governance domain is declared first in ../mdaa.yaml, so the parameter exists by the
+# time this resolves.
+# =====================================================================================
+networkConfiguration:
+  vpcEndpoint:
+    endpointPolicy:
+      allowPrincipals:
+        - ssm-org:/governance/generated-role/agentcore-operator/arn

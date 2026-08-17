@@ -1,0 +1,43 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyUnapprovedSubnets",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateAgentRuntime",
+        "bedrock-agentcore:UpdateAgentRuntime",
+        "bedrock-agentcore:CreateCodeInterpreter",
+        "bedrock-agentcore:CreateBrowser"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "ForAnyValue:StringNotEquals": {
+          "bedrock-agentcore:subnets": [
+            "subnet-0123456789abcdef0",
+            "subnet-0123456789abcdef1"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyUnapprovedSecurityGroups",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateAgentRuntime",
+        "bedrock-agentcore:UpdateAgentRuntime",
+        "bedrock-agentcore:CreateCodeInterpreter",
+        "bedrock-agentcore:CreateBrowser"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "ForAnyValue:StringNotEquals": {
+          "bedrock-agentcore:securityGroups": [
+            "sg-0123456789abcdef0",
+            "sg-0123456789abcdef1"
+          ]
+        }
+      }
+    }
+  ]
+}

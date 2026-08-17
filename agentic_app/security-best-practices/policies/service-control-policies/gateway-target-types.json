@@ -1,0 +1,36 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyDirectMcpServerTargets",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateGatewayTarget",
+        "bedrock-agentcore:UpdateGatewayTarget"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "bedrock-agentcore:McpTargetConfigurationType": "mcpServer"
+        }
+      }
+    },
+    {
+      "Sid": "RestrictTargetCredentialTypes",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateGatewayTarget",
+        "bedrock-agentcore:UpdateGatewayTarget"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "bedrock-agentcore:CredentialProviderType": [
+            "GATEWAY_IAM_ROLE",
+            "CALLER_IAM_CREDENTIALS"
+          ]
+        }
+      }
+    }
+  ]
+}

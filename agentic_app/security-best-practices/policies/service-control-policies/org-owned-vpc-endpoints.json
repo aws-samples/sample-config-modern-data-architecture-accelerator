@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyNonOrgVpcEndpoints",
+      "Effect": "Deny",
+      "Action": "bedrock-agentcore:InvokeAgentRuntime*",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEqualsIfExists": {
+          "aws:VpceOrgID": "o-xxxxxxxxxx"
+        },
+        "BoolIfExists": {
+          "aws:ViaAWSService": "false"
+        },
+        "Null": {
+          "aws:SourceVpce": "false"
+        }
+      }
+    }
+  ]
+}

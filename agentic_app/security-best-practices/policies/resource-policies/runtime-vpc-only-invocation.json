@@ -1,0 +1,50 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowVpcOnly",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "bedrock-agentcore:InvokeAgentRuntime*",
+      "Resource": "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/EXAMPLE",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceVpc": "vpc-0123456789abcdef0"
+        }
+      }
+    },
+    {
+      "Sid": "DenyWrongVpc",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "bedrock-agentcore:InvokeAgentRuntime*",
+      "Resource": "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/EXAMPLE",
+      "Condition": {
+        "StringNotEqualsIfExists": {
+          "aws:SourceVpc": "vpc-0123456789abcdef0"
+        },
+        "Null": {
+          "aws:SourceVpc": "false"
+        },
+        "BoolIfExists": {
+          "aws:ViaAWSService": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyNoVpc",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "bedrock-agentcore:InvokeAgentRuntime*",
+      "Resource": "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/EXAMPLE",
+      "Condition": {
+        "Null": {
+          "aws:SourceVpc": "true"
+        },
+        "BoolIfExists": {
+          "aws:ViaAWSService": "false"
+        }
+      }
+    }
+  ]
+}

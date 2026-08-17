@@ -1,4 +1,27 @@
-agentRuntimeName: "{{org}}-myAgentRuntimeDev"
+# Shared settings for the AgentCore runtime — everything both inbound-auth paths use.
+#
+# ⚠️ THIS FILE IS NOT A COMPLETE CONFIG. It is layered with exactly one of:
+#
+#     runtime-jwt.yaml     Cognito JWT / OAuth inbound  (what ../mdaa.yaml deploys)
+#     runtime-sigv4.yaml   SigV4 (IAM) inbound
+#
+# MDAA deep-merges every file in a module's `module_configs` left to right, so the layer
+# adds to and overrides what is here. See the `agent-core-app` module in ../mdaa.yaml.
+#
+# WHERE THE PATHS DIFFER. Four settings below are identical on both paths but mean different
+# things, and each layer explains its own reading of them:
+#
+#     enforceVpcOnly              the entire perimeter on JWT; defence in depth on SigV4
+#     networkConfiguration.vpcEndpoint   mandatory on JWT; one layer of several on SigV4
+#     eventBridgeAlerts auth-failure     catches different denials on each path
+#     dataProtection              same masking; the logs:Unmask deny that backs it differs
+#
+# Comments here stay neutral on those four. Read the layer for what they mean for your path.
+
+# Both auth paths use the same runtime name and description — they can never coexist in one
+# deployment, since exactly one auth layer is applied. The name comes from ../mdaa.yaml
+# context so that audit-trail.yaml can reference the same value.
+agentRuntimeName: "{{org}}-{{context:agent_runtime_name}}"
 description: "Agent runtime for development environment"
 
 agentRuntimeArtifact:
@@ -75,6 +98,22 @@ dataProtection:
     - "PassportNumber-US"
 # Retain runtime logs for 90 days
 logRetentionDays: 90
+
+# (Optional) X-Ray Transaction Search, which is what makes this agent's spans and traces
+# queryable in the CloudWatch GenAI Observability console. Defaults to true, which is what
+# this sample uses.
+#
+# The underlying AWS::XRay::TransactionSearchConfig resource is a SINGLETON per account per
+# region. The first AgentCore deployment in an account creates it; every later one must opt
+# out, or the stack fails with:
+#
+#   CREATE_FAILED | AWS::XRay::TransactionSearchConfig | (HandlerErrorCode: AlreadyExists)
+#
+# So exactly one deployment in the account owns this. Uncomment if another AgentCore
+# runtime, another MDAA deployment, or anything else has already enabled transaction search
+# in this account and region - the traces remain searchable either way, since the config is
+# account-wide rather than per-runtime.
+# enableTransactionSearch: false
 
 # Optional CloudWatch alarms on the AgentCore service metrics (namespace
 # AWS/Bedrock-AgentCore). The presence of this block enables alarms; omit it to
@@ -154,99 +193,25 @@ eventBridgeAlerts:
       # a function ARN in this account to enable.
       # targetLambdaArn: "arn:{{partition}}:lambda:{{region}}:{{account}}:function:my-remediation"
 
-# Remove this section if you just want IAM auth.
-#
-# Exactly one of `cognito` or `discoveryUrl` is required. This config uses `cognito`, so
-# MDAA creates the user pool and app client and composes the discovery URL and audience
-# itself - no pool needs to exist beforehand, and no IDs need to be pasted into mdaa.yaml.
-# The pool ID, client ID, and discovery URL are published to SSM after deploy (see the
-# README's post-deployment steps).
-#
-# To point at an identity provider you already run instead, replace the whole `cognito`
-# block with:
-#   discoveryUrl: "https://my-idp.example.com/.well-known/openid-configuration"
-#   allowedAudience:
-#     - "my-existing-client-id"
-authorizerConfiguration:
-  customJwtAuthorizer:
-    cognito:
-      # (Optional) ID and access token validity in minutes. Defaults to 15. Short-lived
-      # tokens narrow the window in which a leaked token stays usable, which matters more
-      # for autonomous agents than for interactive users because JWT validation is offline
-      # and cannot revoke an individual token. Accepts 5-60.
-      idTokenValidityMinutes: 15
-      # (Optional) MFA enforcement: off | optional | required. Defaults to required,
-      # which is what this sample uses: every user registers a TOTP authenticator before
-      # their first token.
-      #
-      # `required` is workable here because `hostedUi` below is configured - Cognito's
-      # managed login is what walks each user through that registration. Without a hosted
-      # UI your own application has to drive the enrolment flow itself (see the module
-      # README's MFA section), and a caller with no human present cannot enrol at all -
-      # set `optional` for that case, since storing a TOTP seed beside the password would
-      # make the second factor a second copy of the first.
-      mfa: required
-      # (Optional) Pool removal policy: destroy | retain. Defaults to retain, which keeps
-      # the pool and its users when the stack is deleted and enables Cognito deletion
-      # protection. Set destroy for a throwaway deployment you want torn down completely -
-      # that deletes the pool and every user record in it.
-      removalPolicy: retain
-      # Cognito's hosted UI (managed login), which is what makes an interactive human
-      # sign-in possible: the user authenticates in a browser, enrols their TOTP
-      # authenticator, and the browser is redirected back with an authorization code to
-      # exchange for tokens. Omit this block and the app client has OAuth disabled
-      # entirely. Two consequences worth knowing before adding it:
-      #
-      #   * The app client drops the plaintext-password auth flow (USER_PASSWORD_AUTH),
-      #     because sign-in goes through the code grant instead. There is no
-      #     single-API-call way to obtain a token while this block is present - the
-      #     README's post-deployment steps use the browser flow.
-      #   * Only the authorization code grant is enabled. The implicit grant is never
-      #     offered: it returns tokens in the redirect fragment, where they land in
-      #     browser history and referrer headers.
-      hostedUi:
-        # Redirect URIs permitted after a successful sign-in. Required - a hosted UI with
-        # no callback URL cannot complete the code grant. Must be https, except
-        # http://localhost, which Cognito permits for local testing.
-        #
-        # localhost here so the sample needs no front end deployed: you sign in through
-        # managed login in a browser and read the `code` parameter off the redirect that
-        # nothing is listening for (see the README's post-deployment steps). Replace both
-        # URLs with your front end's real https endpoints once it exists.
-        callbackUrls:
-          - "http://localhost:8000/callback"
-        logoutUrls:
-          - "http://localhost:8000/logout"
-        # (Optional) Hosted-UI domain prefix. Defaults to an MDAA naming-derived value,
-        # published to SSM after deploy so the README can read it back. Cognito domain
-        # prefixes are globally unique per region, so set this explicitly if deployment
-        # reports that the domain already exists.
-        # cognitoDomainPrefix: "my-agent-login"
-        # (Optional) OAuth scopes. Defaults to openid, profile, email, which is what this
-        # sample uses. Keep `openid` in any override: Cognito issues an ID token only when
-        # it is requested, and the ID token is what the runtime's authorizer validates.
-      # (Optional) Federation with an enterprise IdP, so users sign in with their existing
-      # corporate credentials instead of a Cognito-local password. At most one of saml or
-      # oidc. It requires the `hostedUi` block above - Cognito signs federated users in
-      # only through the hosted-UI endpoints, never InitiateAuth:
-      #   federation:
-      #     saml:
-      #       metadataUrl: 'https://login.microsoftonline.com/{tenant}/federationmetadata/2007-06/federationmetadata.xml'
-      # Cognito applies no MFA of its own to federated users - the IdP authenticates them -
-      # so enforce MFA there and set `mfa: off` here if every user is federated.
-    #
-    # `allowedAudience` is deliberately absent: MDAA adds the app client it creates, and
-    # callers on this path present the Cognito ID token whose `aud` claim carries that
-    # client ID. Set it only to accept ADDITIONAL audiences beyond the created client.
-
 # Optional: Restrict model invocation to specific Bedrock model arns (least privilege)
 allowedModelArns:
   - arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
   - arn:aws:bedrock:*:{{account}}:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0
 
-# Additional policies to complement the minimum required for the execution role permissions
-policies:
-  - policyArn: arn:aws:iam::aws:policy/CloudWatchLogsReadOnlyAccess
+# (Optional) Additional managed policies attached to the execution role, on top of the
+# minimum MDAA grants it: writes to this agent's own log groups, and bedrock:InvokeModel
+# scoped to the allowedModelArns above. This sample attaches none - the agent in
+# agent_core_code reaches Bedrock through Strands and calls nothing else, so anything here
+# would widen the role for no reason.
+#
+# Scope whatever you add to specific resource ARNs. The execution role is the blast radius
+# boundary for this runtime: per the AgentCore security best practices, any code running
+# inside the microVM can read its credentials from the metadata service - including code the
+# model generates - so a grant on "Resource": "*" is reachable by that code too. That rules
+# out most broad AWS-managed policies; CloudWatchLogsReadOnlyAccess, for instance, puts
+# every one of its log-read and Insights-query actions on "*".
+# policies:
+#   - policyArn: arn:{{partition}}:iam::{{account}}:policy/my-scoped-policy
 
 # optional runtime endpoint in addition to the DEFAULT
 # this is the endpoint to add to your qualifier when using the AgentCore client

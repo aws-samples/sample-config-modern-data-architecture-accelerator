@@ -15,6 +15,23 @@ RUN uv sync --frozen --no-cache
 # Copy agent file
 COPY agent.py ./
 
+# Run as a non-root user. AgentCore Runtime already isolates each session in its own
+# Firecracker microVM, and the execution role's credentials are readable from the microVM
+# metadata service by any code running there - including code the model generates. Dropping
+# root does not change what that role can reach, but it does limit what a code-execution
+# flaw in the agent or one of its dependencies can do inside the microVM.
+#
+# The UID must be NUMERIC. A named user (`USER appuser`) combined with a high image layer
+# count is a documented cause of an AgentCore start failure that surfaces as HTTP 424 with
+# "Failed to mount overlay" - and, more confusingly, as a runtime stuck in READY that fails
+# every invocation while writing no CloudWatch logs at all.
+#
+# chown comes after the last COPY so the venv and agent.py end up owned by the runtime user.
+# HOME keeps uv's cache under the writable /app instead of a root-owned home directory.
+RUN chown -R 1000:1000 /app
+USER 1000
+ENV HOME=/app
+
 # Expose port
 EXPOSE 8080
 

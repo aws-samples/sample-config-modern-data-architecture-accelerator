@@ -25,6 +25,15 @@ context:
   # that must be accepted before any notification is delivered, so use a mailbox you
   # can read. Until it is confirmed, the alerting deploys but notifies nobody.
   notification_email: admin@example.com # TODO: Replace with a real address you monitor
+  # Logical name for the agent runtime. Two files need it and they must agree: the runtime
+  # config names the runtime, and audit-trail.yaml points its CloudTrail data-event selectors
+  # at that runtime's SSM parameter. Keeping it here means switching auth paths touches only
+  # this file.
+  #
+  # LOWERCASE MATTERS. MDAA lowercases the configured name when it builds the SSM parameter
+  # path, so a mixed-case value here would make the runtime config and the trail reference
+  # disagree. The deployed AWS resource name is MDAA-generated regardless of this value.
+  agent_runtime_name: myagentruntimedev
 
 # One or more domains may be specified. Domain name will be incorporated by default naming implementation
 # to prefix all resource names.
@@ -45,6 +54,19 @@ domains:
             module_path: "@aws-mdaa/roles"
             module_configs:
               - ./roles/roles.yaml
+              # Caller roles - Admin for lifecycle, Operator for invoke, Reader for
+              # inspection. Commented out because this sample uses JWT/OAuth inbound auth,
+              # where callers are token holders with no IAM identity to scope, so these roles
+              # would be created and never used.
+              #
+              # Uncomment together with switching the agent-core-app module below to
+              # ./bedrock-agentcore-runtime/runtime-sigv4.yaml. On that path callers ARE IAM
+              # principals, which is what makes privilege separation meaningful and what lets
+              # the endpoint policy name the operator role.
+              #
+              # Listing several files here is additive: MDAA deep-merges them left to right,
+              # so this adds the three caller roles without restating anything in roles.yaml.
+              # - ./roles/roles-callers.yaml
 
           # This module creates the audit bucket and KMS CMK that the CloudTrail trail in
           # the 'ai' domain delivers to, plus a Glue table for querying the records from
@@ -63,11 +85,22 @@ domains:
         # The list of modules which will be deployed. A module points to a specific MDAA CDK App, and
         # specifies a deployment configuration file if required.
         modules:
-          # This module will create AgentCore runtime
+          # This module will create AgentCore runtime.
+          #
+          # The config is layered: the base carries everything both inbound-auth paths share,
+          # and exactly one auth layer goes on top. The layer file IS the difference between
+          # the two paths - open it to see what changes, rather than diffing two long configs.
           agent-core-app:
             module_path: "@aws-mdaa/bedrock-agentcore-runtime"
             module_configs:
-              - ./bedrock-agentcore-runtime/bedrock-agentcore-runtime.yaml
+              - ./bedrock-agentcore-runtime/runtime-base.yaml
+              # Cognito JWT / OAuth inbound. Callers present a bearer token obtained by
+              # signing in through Cognito's managed login.
+              - ./bedrock-agentcore-runtime/runtime-jwt.yaml
+              # SigV4 (IAM) inbound instead. Swap for the line above - never both, since the
+              # presence of an authorizer block is what selects JWT. Uncomment
+              # ./roles/roles-callers.yaml in the roles module above at the same time.
+              # - ./bedrock-agentcore-runtime/runtime-sigv4.yaml
 
           # This module creates the CloudTrail trail that logs the AgentCore management and
           # data events this runtime's eventBridgeAlerts rules match. Without it those rules

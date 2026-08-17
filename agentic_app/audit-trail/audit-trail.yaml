@@ -48,7 +48,7 @@ trails:
         # expensive option. The path segment after /ai/ is the runtime module's name in
         # mdaa.yaml, and the last is its agentRuntimeName lowercased.
         resourceArns:
-          - ssm-domain:/agent-core-app/agentruntime/{{org}}-myagentruntimedev/arn
+          - ssm-domain:/agent-core-app/agentruntime/{{org}}-{{context:agent_runtime_name}}/arn
         # (Optional) Capture read events, write events, or both. Omit for both;
         # 'All' is the explicit form of that default.
         readWriteType: All
@@ -58,4 +58,4 @@ trails:
       AgentCore runtime endpoint data events:
         resourceType: AWS::BedrockAgentCore::RuntimeEndpoint
         resourceArns:
-          - ssm-domain:/agent-core-app/agentruntime/{{org}}-myagentruntimedev/arn
+          - ssm-domain:/agent-core-app/agentruntime/{{org}}-{{context:agent_runtime_name}}/arn
