@@ -1,0 +1,88 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyWithoutVpcSubnets",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateAgentRuntime",
+        "bedrock-agentcore:UpdateAgentRuntime",
+        "bedrock-agentcore:CreateCodeInterpreter",
+        "bedrock-agentcore:CreateBrowser"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "bedrock-agentcore:subnets": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyWithoutSecurityGroups",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateAgentRuntime",
+        "bedrock-agentcore:UpdateAgentRuntime",
+        "bedrock-agentcore:CreateCodeInterpreter",
+        "bedrock-agentcore:CreateBrowser"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "bedrock-agentcore:securityGroups": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyInvocationNotFromVpcEndpoint",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:InvokeAgentRuntime",
+        "bedrock-agentcore:InvokeAgentRuntimeForUser",
+        "bedrock-agentcore:InvokeAgentRuntimeCommand",
+        "bedrock-agentcore:InvokeAgentRuntimeCommandShell",
+        "bedrock-agentcore:InvokeAgentRuntimeWithWebSocketStream",
+        "bedrock-agentcore:InvokeAgentRuntimeWithWebSocketStreamForUser",
+        "bedrock-agentcore:InvokeGateway"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "aws:SourceVpce": "true"
+        },
+        "Bool": {
+          "aws:ViaAWSService": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyOutsideApprovedRegions",
+      "Effect": "Deny",
+      "Action": "bedrock-agentcore:*",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedRegion": [
+            "us-east-1",
+            "us-west-2"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyCreateWithoutRequiredTag",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateAgentRuntime",
+        "bedrock-agentcore:CreateGateway",
+        "bedrock-agentcore:CreateMemory"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "aws:RequestTag/mdaa_env": "true"
+        }
+      }
+    }
+  ]
+}

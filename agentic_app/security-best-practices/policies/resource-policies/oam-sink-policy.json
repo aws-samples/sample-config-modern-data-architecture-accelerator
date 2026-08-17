@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowOrgAccountsToLinkApprovedTypesOnly",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": [
+        "oam:CreateLink",
+        "oam:UpdateLink"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalOrgID": "o-xxxxxxxxxx"
+        },
+        "ForAllValues:StringEquals": {
+          "oam:ResourceTypes": [
+            "AWS::CloudWatch::Metric",
+            "AWS::Logs::LogGroup",
+            "AWS::XRay::Trace"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+# Caller roles for a runtime using SigV4 (IAM) inbound auth.
+#
+# ⚠️ NOT DEPLOYED. This file is listed but commented out in ../mdaa.yaml. Uncomment it only
+# when the runtime uses SigV4 inbound - see ../bedrock-agentcore-runtime/runtime-sigv4.yaml.
+#
+# ADDITIVE, NOT A REPLACEMENT. MDAA deep-merges every file in a module's `module_configs`
+# left to right, so this sits alongside ./roles.yaml rather than restating it: that file
+# keeps audit-reader and agent-log-reader, this one adds the three caller roles. Nothing is
+# duplicated between them, and the shared roles cannot drift.
+#
+# WHY THESE ONLY EXIST ON THE SigV4 PATH. Callers there are IAM principals, so there is an
+# identity to scope. On the JWT/OAuth path callers are token holders with no IAM identity, so
+# these roles would be created and never used - which is why they are not deployed by default.
+# The same reasoning is what lets ../bedrock-agentcore-runtime/runtime-sigv4.yaml set
+# `endpointPolicy.allowPrincipals` where the JWT layer must leave it unset.
+#
+# All three are prefix-scoped to `runtime/*` because the runtime ARN is not resolvable when
+# this module deploys - the `roles` module is in the 'governance' domain, which deploys before
+# the runtime in 'ai'. Replace the prefix with the specific runtime ARNs each role should
+# reach in a real deployment: a prefix matching every runtime in the account gives back much
+# of what the privilege split was for.
+
+generatePolicies:
+  # Lifecycle only. Deliberately does NOT include invoke - an administrator who needs to call
+  # the agent assumes the operator role, so that use is attributable to that role.
+  agentcore-admin:
+    policyDocument:
+      Statement:
+        - Sid: RuntimeLifecycle
+          Effect: Allow
+          Action:
+            - bedrock-agentcore:CreateAgentRuntime
+            - bedrock-agentcore:UpdateAgentRuntime
+            - bedrock-agentcore:DeleteAgentRuntime
+            - bedrock-agentcore:CreateAgentRuntimeEndpoint
+            - bedrock-agentcore:UpdateAgentRuntimeEndpoint
+            - bedrock-agentcore:DeleteAgentRuntimeEndpoint
+            - bedrock-agentcore:GetAgentRuntime
+            - bedrock-agentcore:GetAgentRuntimeEndpoint
+            - bedrock-agentcore:ListAgentRuntimes
+            - bedrock-agentcore:ListAgentRuntimeEndpoints
+          Resource:
+            - 'arn:{{partition}}:bedrock-agentcore:{{region}}:{{account}}:runtime/*'
+    suppressions:
+      - id: 'AwsSolutions-IAM5'
+        reason: >-
+          Runtime ARNs are not resolvable in the governance domain, which deploys before the
+          runtime. Narrow to specific runtime ARNs in a real deployment.
+
+  # Invocation only. This is the role a client application assumes, and the one named in the
+  # runtime's VPC endpoint policy in ../bedrock-agentcore-runtime/runtime-sigv4.yaml.
+  agentcore-operator:
+    policyDocument:
+      Statement:
+        - Sid: InvokeRuntime
+          Effect: Allow
+          Action:
+            - bedrock-agentcore:InvokeAgentRuntime
+            - bedrock-agentcore:InvokeAgentRuntimeCommand
+            - bedrock-agentcore:InvokeAgentRuntimeCommandShell
+            - bedrock-agentcore:InvokeAgentRuntimeWithWebSocketStream
+            - bedrock-agentcore:GetAgentRuntime
+            - bedrock-agentcore:GetAgentRuntimeEndpoint
+          Resource:
+            - 'arn:{{partition}}:bedrock-agentcore:{{region}}:{{account}}:runtime/*'
+        # The user-id delegation actions, denied explicitly.
+        #
+        # InvokeAgentRuntimeForUser and GetWorkloadAccessTokenForUserId let a caller assert
+        # WHICH end user it is acting for, as a parameter, rather than having that identity
+        # derived from a verified token. Legitimate when a trusted backend front-ends the
+        # agent; a privilege-escalation path when it is not needed, because any holder of
+        # this role could then act as any user.
+        #
+        # Remove this statement only when a specific caller needs delegation, and scope it to
+        # that caller. Note that AgentCore does not validate that a caller owns the session it
+        # names either, so delegation and session ownership are both application obligations.
+        - Sid: DenyUserIdDelegation
+          Effect: Deny
+          Action:
+            - bedrock-agentcore:InvokeAgentRuntimeForUser
+            - bedrock-agentcore:InvokeAgentRuntimeWithWebSocketStreamForUser
+            - bedrock-agentcore:GetWorkloadAccessTokenForUserId
+          Resource: '*'
+    suppressions:
+      - id: 'AwsSolutions-IAM5'
+        reason: >-
+          Runtime ARNs are not resolvable in the governance domain, which deploys before the
+          runtime. Narrow to specific runtime ARNs in a real deployment.
+
+  # Inspection only: no invoke, no lifecycle. For dashboards, audits, and support staff who
+  # need to see that an agent exists and how it is configured without being able to use it.
+  agentcore-reader:
+    policyDocument:
+      Statement:
+        - Sid: DescribeRuntimes
+          Effect: Allow
+          Action:
+            - bedrock-agentcore:GetAgentRuntime
+            - bedrock-agentcore:GetAgentRuntimeEndpoint
+            - bedrock-agentcore:ListAgentRuntimes
+            - bedrock-agentcore:ListAgentRuntimeEndpoints
+          Resource:
+            - 'arn:{{partition}}:bedrock-agentcore:{{region}}:{{account}}:runtime/*'
+    suppressions:
+      - id: 'AwsSolutions-IAM5'
+        reason: >-
+          Runtime ARNs are not resolvable in the governance domain, which deploys before the
+          runtime. Narrow to specific runtime ARNs in a real deployment.
+
+generateRoles:
+  agentcore-admin:
+    trustedPrincipal: this_account
+    generatedPolicies:
+      - agentcore-admin
+
+  # This role's ARN is read back by ../bedrock-agentcore-runtime/runtime-sigv4.yaml, which
+  # names it in the VPC endpoint policy - so only this role reaches AgentCore through it.
+  agentcore-operator:
+    trustedPrincipal: this_account
+    generatedPolicies:
+      - agentcore-operator
+
+  agentcore-reader:
+    trustedPrincipal: this_account
+    generatedPolicies:
+      - agentcore-reader

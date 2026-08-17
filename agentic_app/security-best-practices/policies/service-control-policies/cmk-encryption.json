@@ -1,0 +1,62 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyGatewayWithoutKmsKey",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateGateway",
+        "bedrock-agentcore:UpdateGateway"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "bedrock-agentcore:KmsKeyArn": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyGatewayWithMalformedKmsKey",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateGateway",
+        "bedrock-agentcore:UpdateGateway"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLike": {
+          "bedrock-agentcore:KmsKeyArn": "arn:*:kms:*:*:key/*"
+        }
+      }
+    },
+    {
+      "Sid": "DenyMemoryWithoutKmsKey",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateMemory"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "bedrock-agentcore:KmsKeyArn": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyMemoryRecordsOutsideNamespace",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:BatchCreateMemoryRecords",
+        "bedrock-agentcore:BatchUpdateMemoryRecords",
+        "bedrock-agentcore:ListMemoryRecords",
+        "bedrock-agentcore:RetrieveMemoryRecords"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "bedrock-agentcore:namespace": "approved-namespace"
+        }
+      }
+    }
+  ]
+}

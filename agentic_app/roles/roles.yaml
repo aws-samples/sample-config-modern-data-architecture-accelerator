@@ -8,9 +8,130 @@
 # Created here rather than referencing an existing role by ARN so this sample is portable
 # across accounts. Role names differ per account, and a hardcoded ARN fails role
 # resolution at deploy time in any account that does not have that exact role.
+# A second role reads the AGENT's CloudWatch logs, which is a different thing from the
+# trail records above and needs a different control - see agent-log-reader below.
+generatePolicies:
+  # Read access to the agent's log groups, with unmasking explicitly denied.
+  #
+  # WHY THE DENY IS THE POINT. The runtime config applies a CloudWatch Data Protection
+  # policy, so prompts, model output, and tool arguments are masked on read. That masking
+  # only holds for principals WITHOUT logs:Unmask - anyone holding that action reads the
+  # raw values straight through it. So the strength of the PII masking this deployment
+  # configures is decided here, by who can unmask, not by the identifier list over in
+  # bedrock-agentcore-runtime.yaml.
+  #
+  # An explicit Deny rather than simply omitting the action, because explicit deny always
+  # wins: it survives someone later attaching CloudWatchLogsFullAccess (which does grant
+  # logs:Unmask) to this role. Omitting the action only works until another policy adds it.
+  #
+  # Note the blast radius. An IAM Deny binds only the principals this policy is attached
+  # to. It does not stop an account administrator, or any other role, from unmasking. The
+  # org-wide equivalent is an SCP, which no MDAA module deploys - see section 2 of
+  # ../security-best-practices/YOUR-RESPONSIBILITIES.md.
+  agent-log-reader:
+    policyDocument:
+      Statement:
+        # Read the log events themselves. Scoped by prefix rather than to this agent's
+        # exact log group: that group is named after the runtime ID, which does not exist
+        # yet - this module is in the 'governance' domain and deploys before the runtime in
+        # 'ai'. The prefix still confines the grant to AgentCore runtime log groups.
+        - Sid: ReadAgentRuntimeLogs
+          Effect: Allow
+          Action:
+            - logs:GetLogEvents
+            - logs:FilterLogEvents
+            - logs:DescribeLogStreams
+            - logs:StartQuery
+          Resource:
+            - 'arn:{{partition}}:logs:{{region}}:{{account}}:log-group:/aws/bedrock-agentcore/runtimes/*'
+            - 'arn:{{partition}}:logs:{{region}}:{{account}}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*'
+        # Account-scoped by the API rather than by choice: these three do not accept a
+        # log-group resource, so they cannot be narrowed further.
+        - Sid: ListAndCollectQueryResults
+          Effect: Allow
+          Action:
+            - logs:DescribeLogGroups
+            - logs:DescribeQueries
+            - logs:GetQueryResults
+          Resource: '*'
+        # The control this role exists to demonstrate.
+        - Sid: DenyUnmaskingProtectedData
+          Effect: Deny
+          Action:
+            - logs:Unmask
+          Resource: '*'
+    suppressions:
+      - id: 'AwsSolutions-IAM5'
+        reason: >-
+          Log group names incorporate the runtime ID, which is not known when this module
+          deploys, so reads are scoped by the /aws/bedrock-agentcore/runtimes/ prefix. The
+          three account-scoped actions do not accept a log-group resource.
+
+  # =======================================================================================
+  # NOT ENABLED, AND NOT APPLICABLE TO THIS SAMPLE.
+  #
+  # WHAT IT IS. AgentCore exposes the inbound JWT's claims as IAM condition keys, so a
+  # policy can restrict WHICH identity provider, client, user, or scope may exchange a token
+  # for a workload access token. It is the IAM-layer counterpart to the authorizer's own
+  # validation in ../bedrock-agentcore-runtime/runtime-jwt.yaml: the authorizer decides
+  # whether a token is valid, these keys decide whether the caller presenting it is allowed
+  # to proceed. Two layers, two places to configure.
+  #
+  # WHY IT DOES NOTHING HERE. The keys are evaluated on the AgentCore Identity APIs -
+  # GetWorkloadAccessTokenForJWT and CompleteResourceTokenAuth. This agent never calls them:
+  # it reaches Bedrock through Strands and holds no third-party credentials, so there is no
+  # token exchange to condition. A policy with these keys would deploy cleanly and never be
+  # consulted.
+  #
+  # WHEN IT BECOMES RELEVANT. As soon as the agent fetches outbound credentials through
+  # AgentCore Identity - a Gateway target, an OAuth credential provider for a third-party
+  # API, or a backend performing on-behalf-of token exchange. At that point the exchange
+  # calls happen under some principal, and this is how you stop that principal exchanging
+  # tokens from an issuer or client you did not intend.
+  #
+  # Attach to whichever role makes those calls, and note that MDAA's authorizer already
+  # covers the issuer, audience, and client on the `cognito` path - so treat this as
+  # defence in depth rather than the primary control.
+  #
+  # ⚠️ VERIFY BEFORE RELYING ON IT. These keys are real but AWS does not document which
+  # actions populate each one, and the correct operator for the multi-valued `scope` claim
+  # is unestablished. A condition on a key the service does not populate does not fail - it
+  # simply never matches, so the statement silently allows everything it was meant to
+  # restrict. Sandbox-test each condition with a call that should be denied and one that
+  # should succeed. See "Test before you attach" in
+  # ../security-best-practices/YOUR-RESPONSIBILITIES.md.
+  # =======================================================================================
+  # agentcore-identity-caller:
+  #   policyDocument:
+  #     Statement:
+  #       - Sid: ExchangeOnlyTokensFromOurPool
+  #         Effect: Allow
+  #         Action:
+  #           - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+  #         Resource: '*'
+  #         Condition:
+  #           StringEquals:
+  #             # Issuer: the Cognito pool MDAA creates. Read the discovery URL from SSM
+  #             # after deploy; the issuer is that URL minus the
+  #             # /.well-known/openid-configuration suffix.
+  #             'bedrock-agentcore:InboundJwtClaim/iss': 'https://cognito-idp.<region>.amazonaws.com/<user-pool-id>'
+  #             # Client: the app client MDAA creates, published to SSM as .../cognito/client-id.
+  #             'bedrock-agentcore:InboundJwtClaim/client_id': '<app-client-id>'
+  #       # The same pattern applies to /aud, /sub, and /scope. `sub` restricts to specific
+  #       # users, which is rarely what you want in a policy - prefer scopes. Confirm the
+  #       # operator for `scope` before using it: it carries multiple space-delimited values,
+  #       # so a plain StringEquals may never match.
+
 generateRoles:
   # Referenced from audit/audit.yaml as `id: generated-role-id:audit-reader`.
   audit-reader:
     # Assumable by principals in this account, so an operator session can assume it to
     # read trail records out of the audit bucket.
     trustedPrincipal: this_account
+
+  # Assume this to read agent logs - including the spans carrying prompts, model I/O, and
+  # tool arguments - without the ability to unmask the PII in them.
+  agent-log-reader:
+    trustedPrincipal: this_account
+    generatedPolicies:
+      - agent-log-reader

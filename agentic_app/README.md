@@ -46,16 +46,29 @@ This configuration deploys a complete agentic application with:
 ### Directory Structure
 ```
 agentic_app/
-├── mdaa.yaml                                           # Main orchestration config
-├── tags.yaml                                           # Resource tagging
-└── bedrock-agentcore-runtime/
-    ├── bedrock-agentcore-runtime.yaml                 # Runtime configuration
-    └── agent_core_code/
-        ├── agent.py                                    # FastAPI agent server
-        ├── Dockerfile                                  # Container image definition
-        ├── pyproject.toml                              # Python dependencies
-        ├── uv.lock                                     # Dependency lock file
-        └── .python-version                             # Python version specification
+├── mdaa.yaml                          # Main orchestration config — also selects the auth path
+├── tags.yaml                          # Resource tagging
+├── bedrock-agentcore-runtime/
+│   ├── runtime-base.yaml              # Shared runtime settings (not deployable alone)
+│   ├── runtime-jwt.yaml               # Cognito JWT / OAuth inbound — the deployed path
+│   ├── runtime-sigv4.yaml             # SigV4 (IAM) inbound — alternative, not deployed
+│   └── agent_core_code/
+│       ├── agent.py                   # FastAPI agent server
+│       ├── Dockerfile                 # Container image definition
+│       ├── pyproject.toml             # Python dependencies
+│       ├── uv.lock                    # Dependency lock file
+│       └── .python-version            # Python version specification
+├── roles/
+│   ├── roles.yaml                     # Audit reader, agent log reader
+│   └── roles-callers.yaml             # Caller roles — SigV4 path only, not deployed
+├── audit/audit.yaml                   # Audit bucket + CMK the trail delivers to
+├── audit-trail/audit-trail.yaml       # CloudTrail trail with AgentCore data events
+├── security-best-practices/           # Security guidance, split by who has to act
+│   ├── YOUR-RESPONSIBILITIES.md       #   what you do out of band
+│   ├── CONFIGURABLE-CONTROLS.md       #   what you get by setting a property
+│   ├── BUILT-IN-CONTROLS.md           #   what MDAA applies unconditionally
+│   └── policies/                      #   SCP and resource-policy JSON
+└── lza/README.md                      # Applying the org-level controls with LZA
 ```
 
 ### Key Configuration Files
@@ -80,19 +93,46 @@ context:
   notification_email: <>        # CHANGE THIS
 
 domains:
+  governance:            # deploys first — the 'ai' domain reads its SSM parameters
+    environments:
+      dev:
+        modules:
+          roles:
+            module_path: "@aws-mdaa/roles"
+            module_configs:
+              - ./roles/roles.yaml
+              # - ./roles/roles-callers.yaml    # SigV4 path only
+          audit:
+            module_path: "@aws-mdaa/audit"
+            module_configs:
+              - ./audit/audit.yaml
+
   ai:
     environments:
       dev:
         modules:
-          agent-core-hello:
+          agent-core-app:
             module_path: "@aws-mdaa/bedrock-agentcore-runtime"
             module_configs:
-              - ./bedrock-agentcore-runtime/bedrock-agentcore-runtime.yaml
+              - ./bedrock-agentcore-runtime/runtime-base.yaml
+              - ./bedrock-agentcore-runtime/runtime-jwt.yaml
+              # - ./bedrock-agentcore-runtime/runtime-sigv4.yaml
+          audit-trail:
+            module_path: "@aws-mdaa/audit-trail"
+            module_configs:
+              - ./audit-trail/audit-trail.yaml
 ```
+
+**The runtime config is layered.** `runtime-base.yaml` holds everything both inbound-auth paths share; exactly one auth layer goes on top, and MDAA deep-merges them left to right. The layer file *is* the difference between the two paths, so to see what changes, read the layer rather than diffing two long configs.
+
+To use SigV4 (IAM) inbound instead of Cognito JWT: swap `runtime-jwt.yaml` for `runtime-sigv4.yaml`, and uncomment `roles/roles-callers.yaml` at the same time. Never both auth layers — the presence of an authorizer block is what selects JWT.
 
 #### Key Module Configurations
 
-- **bedrock-agentcore-runtime.yaml**: Configures the AgentCore runtime with container settings, network configuration, JWT authentication, and runtime endpoint
+- **runtime-base.yaml**: Container settings, network configuration, log protection, alarms, and EventBridge rules — everything both auth paths share
+- **runtime-jwt.yaml**: The Cognito JWT authorizer, added on top of the base. This is the deployed path
+- **runtime-sigv4.yaml**: The SigV4 alternative — sets the VPC endpoint policy's allowed principals and, by omitting an authorizer, selects IAM inbound auth
+- **roles/roles.yaml**: Audit-bucket reader, plus a log reader denied `logs:Unmask` so PII masking holds for it
 - **tags.yaml**: Standard tags applied to all resources
 - **agent_core_code/agent.py**: FastAPI server implementing the Strands agent with `/invocations` and `/ping` endpoints
 - **agent_core_code/Dockerfile**: Container image definition for ARM64 platform
@@ -133,6 +173,13 @@ The deployment implements:
 - **Encryption**: Data encryption in transit and at rest
 - **Network Isolation**: VPC deployment with private subnets
 - **Audit Logging**: CloudWatch logs for all agent interactions
+
+These are the controls this configuration deploys. The organization- and account-level controls that should surround them before a production deployment — SCP templates, CloudTrail data events, the inbound authorization evaluation order, a pre-production checklist, and cross-account observability — are documented in [security-best-practices/YOUR-RESPONSIBILITIES.md](security-best-practices/YOUR-RESPONSIBILITIES.md).
+
+Two of them are worth knowing now, because they change what you get from this configuration:
+
+- **CloudTrail data events are off by default**, so `InvokeAgentRuntime` calls are not recorded and the `auth-failure` EventBridge rule this config deploys will not match anything. See step 7 below, and [section 3](security-best-practices/YOUR-RESPONSIBILITIES.md#3-cloudtrail-data-events).
+- **SCPs do not restrict OAuth/JWT callers.** This configuration uses Cognito JWT inbound auth, so its resource-based policy is the perimeter, not any org-level guardrail. See [section 4](security-best-practices/YOUR-RESPONSIBILITIES.md#4-evaluation-order).
 
 ***
 
@@ -366,7 +413,20 @@ The `eventBridgeAlerts` block creates two rules — `auth-failure` and `config-c
 - **Management events** (`UpdateAgentRuntime`, `DeleteAgentRuntime`) are logged by default on any trail, so `config-change` works as soon as a trail exists.
 - **Data events** (`InvokeAgentRuntime`, and the authorization failures that accompany it) are **off by default** and require an explicit advanced event selector for resource types `AWS::BedrockAgentCore::Runtime` and `AWS::BedrockAgentCore::RuntimeEndpoint`. `auth-failure` stays silent until that is enabled.
 
-Deploy a trail using the MDAA audit-trail module or create one out of band, then verify matches in the EventBridge console before relying on these alerts. To remove the rules instead, delete the `eventBridgeAlerts` block from the runtime config.
+Deploy the trail with the MDAA audit-trail module, using the worked config in [section 3 of security-best-practices/YOUR-RESPONSIBILITIES.md](security-best-practices/YOUR-RESPONSIBILITIES.md#3-cloudtrail-data-events) — which also covers cost scoping and the `put-event-selectors` path for a trail MDAA does not own.
+
+Two values are specific to this starter kit. Substitute them into the `resourceArns` of both selectors, in place of the generic path that section shows:
+
+```yaml
+# Module 'agent-core-app' (mdaa.yaml) + runtime '{{org}}-myAgentRuntimeDev', lowercased.
+# Replace <org> with your organization name.
+resourceArns:
+  - ssm-domain:/agent-core-app/agentruntime/<org>-myagentruntimedev/arn
+```
+
+Keep `includeManagementEvents: true` on that trail, or `config-change` goes silent along with every other control plane record.
+
+Verify matches in the EventBridge console before relying on these alerts. To remove the rules instead, delete the `eventBridgeAlerts` block from the runtime config.
 
 ***
 
@@ -495,18 +555,16 @@ Resource handler returned message: "null" (HandlerErrorCode: AlreadyExists)
 - Another AWS service or deployment has configured X-Ray transaction search
 - You're deploying multiple agentic applications in the same region
 
-**Solution**: Add `enableTransactionSearch: false` to your runtime configuration in `bedrock-agentcore-runtime/bedrock-agentcore-runtime.yaml`:
+**Solution**: Add `enableTransactionSearch: false` to your runtime configuration in `bedrock-agentcore-runtime/runtime-base.yaml`:
+
+It is already present as a commented line there — uncomment it:
 
 ```yaml
-agentRuntimeName: helloAgentRuntime
-enableTransactionSearch: false  # Add this line
-description: "Hello Agent Runtime"
-agentRuntimeArtifact:
-  containerConfiguration:
-    codePath: ./agent_core_code
-    platform: linux/arm64
-# ... rest of configuration
+# in bedrock-agentcore-runtime/runtime-base.yaml
+enableTransactionSearch: false
 ```
+
+Traces stay searchable either way: the config is account-wide, so whichever deployment owns it covers the rest.
 
 ***
 
@@ -524,5 +582,5 @@ After deploying this sample agentic application:
 For more information on building agentic applications, see:
 - [Amazon Bedrock AgentCore Documentation](https://docs.aws.amazon.com/bedrock-agentcore/)
 - [Strands Framework Documentation](https://github.com/awslabs/strands)
-- [MDAA Documentation](../../README.md)
+- [MDAA Documentation](https://github.com/aws/modern-data-architecture-accelerator)
 

@@ -1,0 +1,120 @@
+# Cognito JWT / OAuth inbound auth. Layer over runtime-base.yaml.
+#
+# This is the path ../mdaa.yaml deploys. It adds the authorizer block and nothing else —
+# every other setting comes from the base, so this file IS the difference.
+#
+# WHAT THE BASE SETTINGS MEAN ON THIS PATH
+#
+#   * enforceVpcOnly is THE PERIMETER, not defence in depth. SCPs and VPC endpoint policies
+#     restrict IAM principals, and an OAuth caller is not one — so the resource policy with
+#     its aws:SourceVpc condition is the only layer that reaches these callers. Removing it
+#     leaves the runtime reachable by any valid token holder from anywhere.
+#   * networkConfiguration.vpcEndpoint is therefore MANDATORY, not optional. That resource
+#     policy tests aws:SourceVpc, which a request only carries when it arrives through a VPC
+#     endpoint. Without one, nothing can invoke the runtime at all.
+#   * networkConfiguration.vpcEndpoint.endpointPolicy.allowPrincipals must stay UNSET.
+#     OAuth callers have no IAM identity for an endpoint policy to match, so naming
+#     principals would lock out every caller.
+#   * eventBridgeAlerts auth-failure sees resource-policy denials only — notably the
+#     enforceVpcOnly denial for a caller outside the VPC. A bad or expired token is refused
+#     by the Cognito authorizer before IAM is consulted, so no IAM authorization failure is
+#     recorded. Do not read a quiet rule as proof it is misconfigured.
+#   * dataProtection masking is backed by the logs:Unmask deny in ../roles/roles.yaml.
+
+# Remove this section if you just want IAM auth.
+#
+# Exactly one of `cognito` or `discoveryUrl` is required. This config uses `cognito`, so
+# MDAA creates the user pool and app client and composes the discovery URL and audience
+# itself - no pool needs to exist beforehand, and no IDs need to be pasted into mdaa.yaml.
+# The pool ID, client ID, and discovery URL are published to SSM after deploy (see the
+# README's post-deployment steps).
+#
+# To point at an identity provider you already run instead, replace the whole `cognito`
+# block with:
+#   discoveryUrl: "https://my-idp.example.com/.well-known/openid-configuration"
+#   allowedAudience:
+#     - "my-existing-client-id"
+authorizerConfiguration:
+  customJwtAuthorizer:
+    cognito:
+      # (Optional) ID and access token validity in minutes. Defaults to 15. Short-lived
+      # tokens narrow the window in which a leaked token stays usable, which matters more
+      # for autonomous agents than for interactive users because JWT validation is offline
+      # and cannot revoke an individual token. Accepts 5-60.
+      idTokenValidityMinutes: 15
+      # (Optional) MFA enforcement: off | optional | required. Defaults to required,
+      # which is what this sample uses: every user registers a TOTP authenticator before
+      # their first token.
+      #
+      # `required` is workable here because `hostedUi` below is configured - Cognito's
+      # managed login is what walks each user through that registration. Without a hosted
+      # UI your own application has to drive the enrolment flow itself (see the module
+      # README's MFA section), and a caller with no human present cannot enrol at all -
+      # set `optional` for that case, since storing a TOTP seed beside the password would
+      # make the second factor a second copy of the first.
+      mfa: required
+      # (Optional) Pool removal policy: destroy | retain. Defaults to retain, which keeps
+      # the pool and its users when the stack is deleted and enables Cognito deletion
+      # protection. Set destroy for a throwaway deployment you want torn down completely -
+      # that deletes the pool and every user record in it.
+      removalPolicy: retain
+      # Cognito's hosted UI (managed login), which is what makes an interactive human
+      # sign-in possible: the user authenticates in a browser, enrols their TOTP
+      # authenticator, and the browser is redirected back with an authorization code to
+      # exchange for tokens. Omit this block and the app client has OAuth disabled
+      # entirely. Two consequences worth knowing before adding it:
+      #
+      #   * The app client drops the plaintext-password auth flow (USER_PASSWORD_AUTH),
+      #     because sign-in goes through the code grant instead. There is no
+      #     single-API-call way to obtain a token while this block is present - the
+      #     README's post-deployment steps use the browser flow.
+      #   * Only the authorization code grant is enabled. The implicit grant is never
+      #     offered: it returns tokens in the redirect fragment, where they land in
+      #     browser history and referrer headers.
+      hostedUi:
+        # Redirect URIs permitted after a successful sign-in. Required - a hosted UI with
+        # no callback URL cannot complete the code grant. Must be https, except
+        # http://localhost, which Cognito permits for local testing.
+        #
+        # localhost here so the sample needs no front end deployed: you sign in through
+        # managed login in a browser and read the `code` parameter off the redirect that
+        # nothing is listening for (see the README's post-deployment steps). Replace both
+        # URLs with your front end's real https endpoints once it exists.
+        callbackUrls:
+          - "http://localhost:8000/callback"
+        logoutUrls:
+          - "http://localhost:8000/logout"
+        # (Optional) Hosted-UI domain prefix. Defaults to an MDAA naming-derived value,
+        # published to SSM after deploy so the README can read it back. Cognito domain
+        # prefixes are globally unique per region, so set this explicitly if deployment
+        # reports that the domain already exists.
+        # cognitoDomainPrefix: "my-agent-login"
+        # (Optional) OAuth scopes. Defaults to openid, profile, email, which is what this
+        # sample uses. Keep `openid` in any override: Cognito issues an ID token only when
+        # it is requested, and the ID token is what the runtime's authorizer validates.
+      # (Optional) Federation with an enterprise IdP, so users sign in with their existing
+      # corporate credentials instead of a Cognito-local password. At most one of saml or
+      # oidc. It requires the `hostedUi` block above - Cognito signs federated users in
+      # only through the hosted-UI endpoints, never InitiateAuth:
+      #   federation:
+      #     saml:
+      #       metadataUrl: 'https://login.microsoftonline.com/{tenant}/federationmetadata/2007-06/federationmetadata.xml'
+      # Cognito applies no MFA of its own to federated users - the IdP authenticates them -
+      # so enforce MFA there and set `mfa: off` here if every user is federated.
+    #
+    # `allowedAudience` is deliberately absent: MDAA adds the app client it creates, and
+    # callers on this path present the Cognito ID token whose `aud` claim carries that
+    # client ID. Set it only to accept ADDITIONAL audiences beyond the created client.
+    #
+    # Two things this block does NOT cover, if you are working through the checklist in
+    # ../security-best-practices/YOUR-RESPONSIBILITIES.md:
+    #
+    #   * Allowed SCOPES and required CUSTOM CLAIMS are not exposed on either the `cognito`
+    #     or `discoveryUrl` path yet. Check the module SCHEMA.md before assuming that is
+    #     still true.
+    #   * The same claims can be enforced a second time at the IAM layer, via the
+    #     bedrock-agentcore:InboundJwtClaim/* condition keys, which apply to the AgentCore
+    #     Identity token-exchange APIs rather than to this authorizer. That is a policy
+    #     rather than runtime config, so it lives in ../roles/roles.yaml - see the commented
+    #     agentcore-identity-caller block there, which also explains why it does nothing for
+    #     this particular agent.
