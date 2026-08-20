@@ -1,0 +1,93 @@
+# Cross-account S3 replication where MDAA manages ONE end of the pair.
+#
+# Two independent domains, one per topology. Deploy either on its own by deleting the other.
+#
+#   outbound - MDAA manages the SOURCE bucket. It replicates to a bucket in another account
+#              that MDAA does not manage. MDAA creates the replication rules, the replication
+#              role, and the source-key decrypt grant. The destination bucket policy and the
+#              destination KMS key policy belong to whoever owns that bucket.
+#
+#   inbound  - MDAA manages the DESTINATION bucket. A bucket outside MDAA replicates into it.
+#              MDAA creates only the bucket-policy and KMS grants for the external replication
+#              role. The replication rules live on the sending bucket, in the other account.
+#
+# For the topology where MDAA manages BOTH ends, see ../mdaa_manages_both_ends.
+#
+# The far end of each pair has to exist before you deploy, and has to grant MDAA's replication
+# role after you deploy. See ./README.md for exactly what and when.
+
+# All resources are deployed to the default region in the environment or AWS configuration.
+# The outbound destination may be in a different region - see context.repl_dest_region.
+region: default
+
+## Pre-Deployment Instructions
+
+# TODO: Set an appropriate, unique organization name.
+# Failure to do so may result in global naming conflicts.
+organization: test-s3-replication-org
+
+# One or more tag files containing tags which will be applied to all deployed resources
+tag_configs:
+  - ./tags.yaml
+
+# TODO: Set appropriate context values for your environment.
+# All values below are placeholders and must be replaced.
+#
+#   repl_dest_*        The bucket in the other account that the `outbound` domain replicates
+#                      TO. It must already exist with versioning enabled, and its replica key
+#                      must be a customer managed key in repl_dest_account and
+#                      repl_dest_region. Delete these four if you are not deploying `outbound`.
+#
+#   repl_source_role_* The replication role of the bucket in the other account that replicates
+#                      INTO the `inbound` domain. The role must already exist - MDAA names it
+#                      directly in a bucket policy and a KMS key policy, and both reject a
+#                      principal that does not resolve. Delete these two if you are not
+#                      deploying `inbound`.
+context:
+  # TODO: Replace with the ARN of the destination bucket in the other account
+  repl_dest_bucket_arn: arn:aws:s3:::replace-with-destination-bucket
+  # TODO: Replace with the account ID owning the destination bucket
+  repl_dest_account: '111111111111'
+  # TODO: Replace with the region of the destination bucket
+  repl_dest_region: us-east-1
+  # TODO: Replace with the full ARN (not an alias ARN) of the replica CMK
+  repl_dest_kms_key_arn: arn:aws:kms:us-east-1:111111111111:key/00000000-0000-0000-0000-000000000000
+  # TODO: Replace with the ARN of the sending account's replication role
+  repl_source_role_arn: arn:aws:iam::222222222222:role/replace-with-source-replication-role
+  # TODO: Replace with the account ID owning the sending bucket
+  repl_source_account: '222222222222'
+
+domains:
+  # MDAA owns the source bucket and sends replicas out.
+  outbound:
+    environments:
+      dev:
+        account: default
+        modules:
+          # Creates the data-admin role referenced by ./outbound/datalake.yaml.
+          roles:
+            module_path: '@aws-mdaa/roles'
+            module_configs:
+              - ./outbound/roles.yaml
+          # Creates the source bucket, its replication rules, and the replication role.
+          datalake:
+            module_path: '@aws-mdaa/datalake'
+            module_configs:
+              - ./outbound/datalake.yaml
+
+  # MDAA owns the destination bucket and receives replicas.
+  inbound:
+    environments:
+      dev:
+        account: default
+        modules:
+          # Creates the data-admin role referenced by ./inbound/datalake.yaml.
+          roles:
+            module_path: '@aws-mdaa/roles'
+            module_configs:
+              - ./inbound/roles.yaml
+          # Creates the destination bucket and grants the external replication role.
+          datalake:
+            module_path: '@aws-mdaa/datalake'
+            module_configs:
+              - ./inbound/datalake.yaml

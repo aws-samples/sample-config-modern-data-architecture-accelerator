@@ -11,6 +11,7 @@ For the complete MDAA source code, documentation, and additional configurations,
 - [lakehouse](lakehouse/) - Complete lakehouse with data lake, Redshift, and DataOps pipelines
 - [governed_lakehouse](governed_lakehouse/) - Enterprise lakehouse with comprehensive governance
 - [agentic_app](agentic_app/) - Agentic AI application with tool use capabilities
+- [s3_replication](s3_replication/) - Cross-account S3 replication, in two variants: MDAA managing one end of the pair, or both
 
 ## Getting Started
 

@@ -1,0 +1,54 @@
+# MDAA manages the DESTINATION bucket. The sender data lake, in another account and in the
+# `sender` domain of this same config, replicates into it.
+#
+# Deployed before the sender: PutBucketReplication on the sender is rejected unless this bucket
+# already exists with versioning enabled.
+
+# Lets the source account read this data lake's key and bucket parameters, which is how the
+# sender resolves the CMK ARN - it contains a key id AWS generates at creation, so no config can
+# carry it in advance. A parameter is resolved in the region of the stack reading it, so both
+# deployments must be in the same region. See the module SCHEMA.md for the side effects.
+shareParametersWithAccounts:
+  - '{{context:source_account}}'
+
+roles:
+  DataAdminRole:
+    - id: generated-role-id:data-admin
+
+accessPolicies:
+  # In scope on both sides - the sender replicates this prefix and the inbound grant below
+  # covers it. Objects here arrive.
+  ReplicatedPolicy:
+    rule:
+      prefix: data
+      ReadWriteSuperRoles:
+        - DataAdminRole
+
+buckets:
+  curated:
+    accessPolicies:
+      - ReplicatedPolicy
+    replication:
+      # Receiving side: grants the sender's replication role permission to write replicas here,
+      # plus use of this data lake's CMK. No replication rules and no replication role are
+      # created - those belong to the sending bucket.
+      inbound:
+        # The role deployed by the repl-role domain, in the source account, read from the SSM
+        # parameter it RAM-shares with this account. Nothing here depends on reproducing MDAA's
+        # role naming, which would be hash-truncated at this config's name lengths - the
+        # parameter path is keyed on the role's config name, and parameter paths are never
+        # truncated.
+        #
+        # `generated-role` sits directly under the domain, with no module segment, because
+        # @aws-mdaa/roles publishes generated roles at domain scope.
+        sourceReplicationRoleArn: 'ssm:arn:{{partition}}:ssm:{{region}}:{{context:source_account}}:parameter/{{org}}/repl-role/generated-role/s3-replication/arn'
+        # Synth-time cross-check against the account inside sourceReplicationRoleArn. It skips
+        # itself here, because that ARN arrives from a parameter and an unresolved token has no
+        # account to read - which is also why this file names the source account in
+        # shareParametersWithAccounts above rather than MDAA deriving it from the role ARN.
+        sourceAccount: '{{context:source_account}}'
+        # Must cover every prefix the sender replicates. A prefix the sender sends but this list
+        # omits is replicated and then refused here, leaving those objects at ReplicationStatus
+        # FAILED on the sender - so keep this in step with ../sender/datalake.yaml.
+        prefixFilters:
+          - data

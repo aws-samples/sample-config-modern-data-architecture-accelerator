@@ -1,0 +1,54 @@
+# MDAA manages the SOURCE bucket, and replicates out to a bucket it does not manage.
+
+roles:
+  DataAdminRole:
+    - id: generated-role-id:data-admin
+
+accessPolicies:
+  # Prefix inside the replication scope - objects written here are replicated.
+  ReplicatedPolicy:
+    rule:
+      prefix: data
+      ReadWriteSuperRoles:
+        - DataAdminRole
+  # Prefix outside every entry in prefixFilters below, so objects written here are NOT
+  # replicated. Included to show that replication is prefix-scoped rather than whole-bucket.
+  NotReplicatedPolicy:
+    rule:
+      prefix: other
+      ReadWriteSuperRoles:
+        - DataAdminRole
+
+buckets:
+  raw:
+    accessPolicies:
+      - ReplicatedPolicy
+      - NotReplicatedPolicy
+    replication:
+      # Sending side. MDAA creates one replication rule per prefix on this bucket, plus the
+      # replication role S3 assumes to send. Nothing is created at the far end - that bucket
+      # belongs to another account, which must grant this role itself. The role's ARN is
+      # published to SSM at /<org>/outbound/datalake/role/raw-replication/arn; hand that to
+      # the destination account's owner. See ../README.md.
+      outbound:
+        # Destination bucket. Must already exist with versioning enabled - S3 rejects a
+        # replication configuration whose destination is not versioned.
+        destinationBucketArn: '{{context:repl_dest_bucket_arn}}'
+        # Required: S3 bucket ARNs carry no account ID, so this cannot be derived.
+        destinationAccount: '{{context:repl_dest_account}}'
+        # May differ from the deployment region. Used to scope the replication role's KMS
+        # grant to S3 in that region.
+        destinationRegion: '{{context:repl_dest_region}}'
+        # Required: MDAA buckets always encrypt with a customer managed key, and S3
+        # replicates no SSE-KMS object unless the rule names a replica key in the destination
+        # region. Must be a customer managed key - AWS managed keys cannot be used
+        # cross-account.
+        destinationKmsKeyArn: '{{context:repl_dest_kms_key_arn}}'
+        # Only these prefixes are replicated. Omit prefixFilters entirely for a whole-bucket
+        # rule.
+        prefixFilters:
+          - data
+        # deleteMarkerReplication is left at its default of false, so a delete here leaves the
+        # replica in place and the destination stays usable as a recovery point. Set it to true
+        # when the destination has to mirror this bucket instead - ../../mdaa_manages_both_ends
+        # does, and MDAA then grants the replication role s3:ReplicateDelete to match.

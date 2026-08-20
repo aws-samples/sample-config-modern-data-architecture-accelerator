@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Detect which top-level project folders have changed.
+# Detect which deployable config folders have changed, and print one per line.
 #
 # In GitLab CI, this uses CI environment variables automatically.
 # For local testing, pass a base ref as an argument:
@@ -9,13 +9,14 @@ set -euo pipefail
 #   ./scripts/detect-changes.sh origin/main
 #   ./scripts/detect-changes.sh abc123
 
-# Valid dirs are any top-level folder containing mdaa.yaml
-VALID_DIRS=$(find . -maxdepth 2 -name "mdaa.yaml" -exec dirname {} \; \
+# Config dirs are any folder containing mdaa.yaml, up to three levels deep, so a top-level
+# folder may either be a config itself (lakehouse/mdaa.yaml) or group several related ones
+# (s3_replication/mdaa_manages_one_end/mdaa.yaml).
+CONFIG_DIRS=$(find . -mindepth 2 -maxdepth 3 -name "mdaa.yaml" -exec dirname {} \; \
   | sed 's|^\./||' \
-  | cut -d'/' -f1 \
   | sort -u)
 
-if [ -z "$VALID_DIRS" ]; then
+if [ -z "$CONFIG_DIRS" ]; then
   echo "No directories containing mdaa.yaml found." >&2
   exit 0
 fi
@@ -49,14 +50,18 @@ if [ -z "$DIFF_FILES" ]; then
   exit 0
 fi
 
-CHANGED_DIRS=$(echo "$DIFF_FILES" \
-  | cut -d'/' -f1 \
-  | sort -u \
-  | grep -xF "$VALID_DIRS" \
-  || true)
+CHANGED_TOP_LEVEL=$(echo "$DIFF_FILES" | cut -d'/' -f1 | sort -u)
+
+# Matched on the top-level folder rather than on the config folder itself, so a change to files
+# a group shares — its README, say — smoke tests every config in the group.
+CHANGED_DIRS=$(echo "$CONFIG_DIRS" | while IFS= read -r config_dir; do
+  if echo "$CHANGED_TOP_LEVEL" | grep -qxF "${config_dir%%/*}"; then
+    echo "$config_dir"
+  fi
+done)
 
 if [ -z "$CHANGED_DIRS" ]; then
-  echo "No relevant top-level folders changed." >&2
+  echo "No relevant config folders changed." >&2
   exit 0
 fi
 

@@ -1,0 +1,48 @@
+# MDAA manages the DESTINATION bucket. A bucket outside MDAA replicates into it.
+
+roles:
+  DataAdminRole:
+    - id: generated-role-id:data-admin
+
+accessPolicies:
+  # Prefix the external sender is allowed to replicate into.
+  ReplicatedPolicy:
+    rule:
+      prefix: data
+      ReadWriteSuperRoles:
+        - DataAdminRole
+  # Prefix outside the inbound grant below. If the sending bucket's rules cover it, those
+  # objects are refused and end at ReplicationStatus FAILED on the sender. Included to show
+  # that this bucket's policy - not the sender's configuration - decides what is accepted.
+  #
+  # This only holds because the sender is in a different account: a cross-account write needs
+  # an Allow on both the sender's identity policy and this bucket's resource policy, so the
+  # grant below is decisive. Same-account, the sender's own policy would suffice.
+  NotReplicatedPolicy:
+    rule:
+      prefix: other
+      ReadWriteSuperRoles:
+        - DataAdminRole
+
+buckets:
+  curated:
+    accessPolicies:
+      - ReplicatedPolicy
+      - NotReplicatedPolicy
+    replication:
+      # Receiving side. Grants an externally-owned replication role permission to write
+      # replicas here, plus use of this data lake's CMK. No replication rules and no
+      # replication role are created - those belong to the sending bucket, in the other
+      # account.
+      inbound:
+        # Replication role of the sending account. It must already exist: MDAA names it
+        # directly in this bucket's policy and in the KMS key policy, and both reject an
+        # unresolvable principal.
+        sourceReplicationRoleArn: '{{context:repl_source_role_arn}}'
+        # Cross-checked at synth against the account in sourceReplicationRoleArn, so a
+        # mistyped ARN fails before deployment rather than at runtime.
+        sourceAccount: '{{context:repl_source_account}}'
+        # Only these prefixes are accepted. Omit prefixFilters entirely to accept the whole
+        # bucket.
+        prefixFilters:
+          - data

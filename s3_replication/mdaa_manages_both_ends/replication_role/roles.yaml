@@ -1,0 +1,19 @@
+# The role S3 assumes to replicate objects out of the sender bucket.
+#
+# Deployed in its own domain, ahead of the receiver, because the receiver's bucket policy and KMS
+# key policy name this role as a principal and both S3 and KMS reject a policy naming a principal
+# that does not resolve. The sender cannot create it either, since the sender deploys last -
+# hence a domain of its own, and ../sender/datalake.yaml referencing it.
+#
+# Standard MDAA naming applies, so the physical role name is
+# <org>-<env>-repl-role-roles-s3-replication, hash-truncated if that reaches 64 characters.
+# Nobody has to write that name anywhere: both consumers read the ARN from the parameter below,
+# and parameter paths are keyed on the config name here rather than on the physical role name.
+generateRoles:
+  s3-replication:
+    trustedPrincipal: service:s3.amazonaws.com
+    # Lets the destination account read this role's ARN parameter, which is how its data lake
+    # names the role in a bucket policy and a KMS key policy without reproducing MDAA's role
+    # naming. The reader must be in this region. See the module SCHEMA.md for the side effects.
+    shareParametersWithAccounts:
+      - '{{context:dest_account}}'

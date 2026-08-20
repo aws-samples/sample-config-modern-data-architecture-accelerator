@@ -1,0 +1,104 @@
+# Cross-account S3 replication where MDAA manages BOTH ends of the pair.
+#
+# Nothing is created out of band. Every bucket, key, role, rule and grant on both sides is
+# deployed by MDAA, from this one config, in a single `mdaa deploy` across two accounts.
+#
+# For the topologies where MDAA manages only one end, see ../mdaa_manages_one_end.
+#
+# Domain order is load-bearing. MDAA deploys domains in the order they are declared and
+# resolves no dependency between them, while each side of a replication pair needs something
+# the other side creates:
+#
+#   1. repl-role - the replication role, in the SOURCE account. First, because S3 and KMS both
+#                  reject a resource policy that names a principal which does not resolve, so
+#                  the receiver cannot grant a role that does not exist yet.
+#   2. receiver  - the DESTINATION data lake. Second, because PutBucketReplication is rejected
+#                  unless the destination bucket already exists with versioning enabled.
+#                  Publishes its bucket ARN and CMK ARN as RAM-shared SSM parameters for the
+#                  sender to read.
+#   3. sender    - the SOURCE data lake. Last, so both of the above are already in place.
+#
+# Reorder these and the deploy fails. Nothing validates the order.
+#
+# Within a domain, module order comes from each module's deployStage, not from this file:
+# @aws-mdaa/roles is stage 1 and @aws-mdaa/datalake is stage 2, so roles always precede the
+# data lake that references them.
+#
+# See ./README.md for the account and AWS Organizations prerequisites.
+
+# Both ends must be in the same region. The sender resolves the receiver's bucket and key ARNs
+# from RAM-shared SSM parameters, and a parameter is resolved in the region of the stack reading
+# it, so a cross-region pair cannot read each other's parameters at all. For cross-region
+# replication, use ../mdaa_manages_one_end, where the far-end values are literal ARNs.
+region: default
+
+## Pre-Deployment Instructions
+
+# TODO: Set an appropriate, unique organization name.
+# Failure to do so may result in global naming conflicts.
+organization: test-s3-replication-all-mdaa-org
+
+# One or more tag files containing tags which will be applied to all deployed resources
+tag_configs:
+  - ./tags.yaml
+
+# TODO: Set appropriate context values for your environment.
+# Both values below are placeholders and must be replaced.
+#
+#   source_account - holds the replication role and the sender data lake. State it explicitly
+#                    rather than leaving it as `default`: the receiver builds a parameter ARN in
+#                    this account, and `default` never resolves to an account id anywhere MDAA
+#                    can read it.
+#   dest_account   - holds the receiver data lake. Must be CDK bootstrapped with
+#                    `--trust <source_account>`, since one `mdaa deploy` deploys into both.
+context:
+  # TODO: Replace with the account ID that will hold the sending data lake
+  source_account: '111111111111'
+  # TODO: Replace with the account ID that will hold the receiving data lake
+  dest_account: '222222222222'
+
+domains:
+  # 1. The replication role, alone in its own domain purely so that it is deployed before the
+  #    receiver that grants it. It cannot live in the sender domain, because that domain has to
+  #    come last, and it cannot live in the receiver domain, because the role belongs in the
+  #    source account - S3 in the source account is what assumes it.
+  repl-role:
+    environments:
+      dev:
+        account: '{{context:source_account}}'
+        modules:
+          roles:
+            module_path: '@aws-mdaa/roles'
+            module_configs:
+              - ./replication_role/roles.yaml
+
+  # 2. Destination data lake - receives the replicas.
+  receiver:
+    environments:
+      dev:
+        account: '{{context:dest_account}}'
+        modules:
+          roles:
+            module_path: '@aws-mdaa/roles'
+            module_configs:
+              - ./receiver/roles.yaml
+          datalake:
+            module_path: '@aws-mdaa/datalake'
+            module_configs:
+              - ./receiver/datalake.yaml
+
+  # 3. Source data lake - sends the replicas.
+  sender:
+    environments:
+      dev:
+        # Same account as repl-role, named explicitly for consistency with it.
+        account: '{{context:source_account}}'
+        modules:
+          roles:
+            module_path: '@aws-mdaa/roles'
+            module_configs:
+              - ./sender/roles.yaml
+          datalake:
+            module_path: '@aws-mdaa/datalake'
+            module_configs:
+              - ./sender/datalake.yaml

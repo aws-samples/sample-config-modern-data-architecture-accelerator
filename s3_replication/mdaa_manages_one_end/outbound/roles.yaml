@@ -1,0 +1,9 @@
+# Data admin for the outbound (source) data lake. Referenced from ./datalake.yaml as
+# generated-role-id:data-admin, which resolves against this domain's SSM path, so it has to be
+# deployed in this domain.
+#
+# This is the only role with write access to the data lake - assume it to write the objects you
+# want replicated.
+generateRoles:
+  data-admin:
+    trustedPrincipal: this_account

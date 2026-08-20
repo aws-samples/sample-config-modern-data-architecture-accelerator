@@ -1,0 +1,9 @@
+# Data admin for the receiver data lake, in the destination account. Referenced from
+# ./datalake.yaml as generated-role-id:data-admin, which resolves against this domain's SSM path,
+# so it has to be deployed in this domain.
+#
+# This is the only role with read access to the receiver data lake - assume it to read the
+# replicas that arrive.
+generateRoles:
+  data-admin:
+    trustedPrincipal: this_account
