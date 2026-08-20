@@ -1,0 +1,73 @@
+# MDAA manages the SOURCE bucket. It replicates into the receiver data lake, in another
+# account and in the `receiver` domain of this same config.
+#
+# Deployed last: the destination bucket must already exist, and its CMK ARN must already be
+# published and shared, before either can be referenced here.
+
+roles:
+  DataAdminRole:
+    - id: generated-role-id:data-admin
+
+accessPolicies:
+  # Replicated here and accepted at the far end. Objects here reach the receiver.
+  ReplicatedPolicy:
+    rule:
+      prefix: data
+      ReadWriteSuperRoles:
+        - DataAdminRole
+  # Outside every prefixFilter, so no rule matches and replication is never attempted. Included
+  # to show that replication is prefix-scoped rather than whole-bucket.
+  NotReplicatedPolicy:
+    rule:
+      prefix: other
+      ReadWriteSuperRoles:
+        - DataAdminRole
+
+buckets:
+  raw:
+    accessPolicies:
+      - ReplicatedPolicy
+      - NotReplicatedPolicy
+    replication:
+      # Sending side: MDAA creates the replication rules on this bucket, one per prefix.
+      #
+      # Every reference to the far end below is an SSM parameter reference rather than a
+      # resource ARN, deliberately. The receiver's CMK ARN contains a key id AWS generates at
+      # creation, and MDAA resource names pick up a hash suffix once the composed name reaches
+      # its limit - which this config's bucket names do. Parameter paths are never truncated, so
+      # they are the only identifiers safe to write into a config.
+      outbound:
+        # Uses the role from the repl-role domain rather than letting this module create one,
+        # which is what makes the pair deployable in one pass: the receiver deploys first and
+        # has to grant a role that already exists. The role is in this account, so the plain
+        # ssm-org shorthand resolves it and no RAM share is needed in this direction.
+        replicationRole:
+          arn: ssm-org:/repl-role/generated-role/s3-replication/arn
+        # The receiver's bucket ARN and CMK ARN, read from the parameters it RAM-shares with
+        # this account. Paths under an org are <domain>/<module>/... for anything published
+        # through MdaaParamAndOutput, which is what a data lake's buckets and CMK use.
+        destinationBucketArn: 'ssm:arn:{{partition}}:ssm:{{region}}:{{context:dest_account}}:parameter/{{org}}/receiver/datalake/bucket/curated/arn'
+        destinationKmsKeyArn: 'ssm:arn:{{partition}}:ssm:{{region}}:{{context:dest_account}}:parameter/{{org}}/receiver/datalake/kms/arn'
+        # Required: S3 bucket ARNs carry no account id, so this cannot be derived.
+        destinationAccount: '{{context:dest_account}}'
+        # Same region as the sender, necessarily: a shared-parameter reference cannot cross
+        # regions, so an MDAA-managed far end is always same-region.
+        destinationRegion: '{{region}}'
+        # One rule per prefix. The receiver's inbound prefixFilters must cover everything listed
+        # here - an outbound prefix the receiver does not accept is replicated and then refused,
+        # leaving those objects at ReplicationStatus FAILED. `other` is absent, so no rule
+        # matches it.
+        prefixFilters:
+          - data
+        # Replicate delete markers as well, so deleting an object here also hides it at the
+        # receiver and the two lakes stay in step. Off by default, which leaves the replica in
+        # place and keeps the receiving lake usable as a recovery point after a delete here. On in
+        # this sample because MDAA owns both lakes and they are meant to mirror; a DR copy is
+        # usually better served by the default.
+        #
+        # MDAA grants this role s3:ReplicateDelete to match. A receiving bucket is always granted
+        # it, because the rule that decides belongs to the sending account.
+        #
+        # Two S3 limits apply either way: deleting a specific object version is never replicated,
+        # and neither are delete markers written by a lifecycle expiration rule.
+        deleteMarkerReplication: true

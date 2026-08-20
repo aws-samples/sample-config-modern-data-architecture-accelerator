@@ -1,0 +1,12 @@
+# Data admin for the sender data lake, in the source account. Referenced from ./datalake.yaml as
+# generated-role-id:data-admin, which resolves against this domain's SSM path, so it has to be
+# deployed in this domain.
+#
+# This is the only role with write access to the sender data lake - assume it to write the
+# objects you want replicated.
+#
+# The replication role is NOT here: it has to exist before the receiver domain deploys, and this
+# domain deploys last. See ../replication_role/roles.yaml.
+generateRoles:
+  data-admin:
+    trustedPrincipal: this_account
